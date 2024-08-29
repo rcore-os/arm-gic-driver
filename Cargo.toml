@@ -1,0 +1,8 @@
+[package]
+name = "arm-gic-driver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tock-registers = { version = "0.8" }
+enum_dispatch = "0.3"
