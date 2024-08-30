@@ -1,7 +1,7 @@
 pub mod v2;
 pub mod v3;
 
-use core::arch::asm;
+use core::{arch::asm, u32};
 
 use tock_registers::{
     interfaces::*,
@@ -49,7 +49,14 @@ register_structs! {
         (0x0f20 => SPENDSGIR: [ReadWrite<u32>; 0x4]),
         (0x0f30 => _rsv4),
         (0x0fe8 => ICPIDR2 : ReadOnly<u32, PIDR2::Register>),
-        (0x0fec => @END),
+        (0x0fec => _rsv5),
+        /// v3
+
+        (0x6100 => IROUTER: [ReadWrite<u64>; 987]),
+        (0x7FD8 => _rsv6),
+        (0xFFE8 => PIDR2 : ReadOnly<u32, PIDR2::Register>),
+        (0xFFEC => _rsv7),
+        (0xFFFC => @END),
     }
 }
 register_bitfields! [
@@ -88,11 +95,26 @@ register_bitfields! [
     pub PIDR2 [
         ArchRev OFFSET(4) NUMBITS(4) [],
     ],
+
+    IROUTER [
+        AFF0 OFFSET(0) NUMBITS(8) [],
+        AFF1 OFFSET(8) NUMBITS(8) [],
+        AFF2 OFFSET(16) NUMBITS(8) [],
+        InterruptRoutingMode OFFSET(31) NUMBITS(1) [
+            Aff=0,
+            Any=1,
+        ],
+        AFF3 OFFSET(32) NUMBITS(8) [],
+    ]
 ];
 
 impl Distributor {
     pub fn version(&self) -> u32 {
-        self.ICPIDR2.read(PIDR2::ArchRev)
+        let v = self.ICPIDR2.read(PIDR2::ArchRev);
+        if v == 1 || v == 2 {
+            return v;
+        }
+        self.PIDR2.read(PIDR2::ArchRev)
     }
 
     pub fn implementer(&self) -> u32 {
@@ -122,21 +144,19 @@ impl Distributor {
         self.ITARGETSR[u32::from(intid) as usize].set(target_list)
     }
 
-    pub fn init(&self) {
-        let max_irqs = self.irq_line_max() as usize;
-
-        // Disable all interrupts
-        for i in (0..max_irqs).step_by(32) {
+    pub fn disable_all_interrupts(&self) {
+        for i in (0..self.irq_line_max() as usize).step_by(32) {
             self.ICENABLER[i / 32].set(u32::MAX);
             self.ICPENDR[i / 32].set(u32::MAX);
         }
+    }
 
+    pub fn init(&self) {
         self.CTLR.write(
             CTLR::ARE_S::SET
                 // + CTLR::ARE_NS::SET
-                + CTLR::EnableGrp0::SET
-                // + CTLR::EnableGrp1S::SET
-                // + CTLR::EnableGrp1NS::SET,
+                + CTLR::EnableGrp0::SET, // + CTLR::EnableGrp1S::SET
+                                         // + CTLR::EnableGrp1NS::SET,
         );
     }
 
@@ -166,6 +186,13 @@ impl Distributor {
         self.SGIR.write(val);
     }
 
+    pub fn set_all_group1(&self) {
+        for i in 0..32 {
+            self.IGROUPR[i].set(u32::MAX);
+        }
+    }
+
+    pub fn iroute(&self, intid: IntId) {}
     // pub fn cpu_num(&self) -> u32 {
     //     self.TYPER.read(TYPER::CPUNumber) + 1
     // }

@@ -277,4 +277,8 @@ impl SGI {
     pub fn set_priority(&self, intid: IntId, priority: u8) {
         self.IPRIORITYR[u32::from(intid) as usize].set(priority)
     }
+
+    pub fn set_all_group1(&self) {
+        self.IGROUPR0.set(u32::MAX);
+    }
 }

@@ -11,7 +11,7 @@ use crate::{
         current_cpu,
         v2::{self, CpuInterface},
         v3::{self, RDv3Vec, RDv4Vec, RedistributorItem, LPI, SGI},
-        Distributor,
+        Distributor, CTLR,
     },
 };
 
@@ -32,7 +32,7 @@ pub struct IrqConfig<'a> {
     /// 0xff is the minimum priority.
     pub priority: u8,
     /// If it is empty, irq will bind to core 0.
-    pub cpu: &'a [CPUTarget],
+    pub cpu_list: &'a [CPUTarget],
 }
 
 pub struct Gic {
@@ -98,8 +98,9 @@ impl Gic {
             |grcc| {
                 grcc.enable();
             },
-            |lpi, _| {
+            |lpi, sgi| {
                 lpi.wake();
+                sgi.set_all_group1();
                 v3::enable_group0();
                 v3::enable_group1();
             },
@@ -120,17 +121,54 @@ impl Gic {
     }
 
     fn init(&self) {
-        self.gicd().init();
+        self.gicd().disable_all_interrupts();
+
+        self.match_version_no_rd(
+            |_| {
+                self.gicd().CTLR.write(CTLR::EnableGrp0::SET);
+            },
+            || {
+                // First set the ARE bits
+                self.gicd().CTLR.write(CTLR::ARE_S::SET + CTLR::ARE_NS::SET);
+
+                // The split here is because the register layout is different once ARE==1
+
+                // Now set the rest of the options
+                self.gicd().CTLR.write(
+                    CTLR::ARE_S::SET
+                        + CTLR::ARE_NS::SET
+                        + CTLR::EnableGrp1NS::SET
+                        + CTLR::EnableGrp1S::SET
+                        + CTLR::EnableGrp0::SET,
+                );
+                // Put all SPIs into non-secure group 1.
+                self.gicd().set_all_group1();
+            },
+        );
+    }
+    pub fn version(&self) -> usize {
+        self.gicd().version() as _
     }
 
     /// Enable an interrupt.
     ///  
     pub fn irq_enable(&mut self, cfg: IrqConfig) {
+        if cfg.intid.is_private() {
+            assert!(
+                cfg.cpu_list.len() < 2,
+                "private interrupt can only be assigned to one cpu"
+            );
+        }
+
         let intid = cfg.intid;
         self.gicd().set_enable_interrupt(intid, true);
         self.gicd().set_priority(cfg.intid, cfg.priority);
         let core0 = [CPUTarget::CORE0];
-        let target_list = if cfg.cpu.is_empty() { &core0 } else { cfg.cpu };
+        let target_list = if cfg.cpu_list.is_empty() {
+            &core0
+        } else {
+            cfg.cpu_list
+        };
 
         self.match_version_no_rd(
             |_| {
