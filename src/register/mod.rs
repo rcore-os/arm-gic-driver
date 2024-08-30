@@ -133,18 +133,11 @@ impl Distributor {
 
         self.CTLR.write(
             CTLR::ARE_S::SET
-                + CTLR::ARE_NS::SET
+                // + CTLR::ARE_NS::SET
                 + CTLR::EnableGrp0::SET
-                + CTLR::EnableGrp1S::SET
-                + CTLR::EnableGrp1NS::SET,
+                // + CTLR::EnableGrp1S::SET
+                // + CTLR::EnableGrp1NS::SET,
         );
-
-        // if self.cpu_num() > 1 {
-        //     for i in (SPI_RANGE.start as usize..max_irqs).step_by(4) {
-        //         // Set external interrupts to target cpu 0
-        //         self.ITARGETSR[i / 4].set(0x01_01_01_01);
-        //     }
-        // }
     }
 
     pub fn sgi(&self, intid: IntId, target: SGITarget) {

@@ -40,6 +40,7 @@ pub struct Gic {
     version_spec: VersionSpec,
 }
 unsafe impl Send for Gic {}
+unsafe impl Sync for Gic {}
 
 impl Gic {
     pub fn new(gicd: NonNull<u8>, config: Config) -> Result<Self> {
@@ -124,7 +125,7 @@ impl Gic {
 
     /// Enable an interrupt.
     ///  
-    pub fn irq_enable(&self, cfg: IrqConfig) {
+    pub fn irq_enable(&mut self, cfg: IrqConfig) {
         let intid = cfg.intid;
         self.gicd().set_enable_interrupt(intid, true);
         self.gicd().set_priority(cfg.intid, cfg.priority);

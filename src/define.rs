@@ -108,7 +108,7 @@ impl IntId {
 
     /// Returns the interrupt ID for the given Software Generated Interrupt.
     pub const fn sgi(sgi: u32) -> Self {
-        assert!(sgi < SGI_RANGE.start);
+        assert!(sgi < SGI_RANGE.end);
         Self(sgi)
     }
 
