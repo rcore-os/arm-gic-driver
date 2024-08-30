@@ -1,11 +1,15 @@
 use core::{arch::asm, ptr::NonNull};
 
-use tock_registers::interfaces::Writeable;
+use tock_registers::{
+    interfaces::{ReadWriteable, Readable, Writeable},
+    registers::ReadWrite,
+};
 
 use crate::{
     define::*,
     register::{
-        current_cpu, v2,
+        current_cpu,
+        v2::{self, CpuInterface},
         v3::{self, RDv3Vec, RDv4Vec, RedistributorItem, LPI, SGI},
         Distributor,
     },
@@ -23,9 +27,9 @@ pub enum Config {
 
 pub struct IrqConfig {
     pub intid: IntId,
-    pub target: CPUTarget,
     pub trigger: Trigger,
     pub priority: u8,
+    pub cpu: Option<CPUTarget>,
 }
 
 pub struct Gic {
@@ -84,7 +88,7 @@ impl Gic {
     }
 
     pub fn current_cpu_setup(&self) {
-        self.match_v3v4(current_cpu(), |lpi, _| {
+        self.match_v3v4(Some(current_cpu()), |lpi, _| {
             lpi.wake();
         });
 
@@ -117,33 +121,81 @@ impl Gic {
 
     pub fn irq_enable(&self, cfg: IrqConfig) {
         self.gicd().set_enable_interrupt(cfg.intid, true);
-        let bit = 1 << (u32::from(cfg.intid) % 32);
 
-        self.match_v3v4(cfg.target, |lpi, sgi| {
+        self.match_v1v2(|_| {
+            set_cfgr(&self.gicd().ICFGR, cfg.intid, cfg.trigger);
+            self.gicd().set_priority(cfg.intid, cfg.priority);
+            self.gicd().set_bind_cpu(cfg.intid, 0);
+        });
+
+        self.match_v3v4(cfg.cpu, |_, sgi| {
             if cfg.intid.is_private() {
-                sgi.ISENABLER0.set(bit);
+                sgi.set_enable_interrupt(cfg.intid, true);
+                set_cfgr(&sgi.ICFGR, cfg.intid, cfg.trigger);
+
+                sgi.set_priority(cfg.intid, cfg.priority);
+                self.gicd().set_bind_cpu(cfg.intid, 0);
+            } else {
+                set_cfgr(&self.gicd().ICFGR, cfg.intid, cfg.trigger);
+                self.gicd().set_priority(cfg.intid, cfg.priority);
             }
         });
     }
-
-    fn match_v3v4<F>(&self, id: CPUTarget, f: F)
+    fn match_v1v2<F>(&self, f: F)
+    where
+        F: FnOnce(&CpuInterface),
+    {
+        match &self.version_spec {
+            VersionSpec::V1 { gicc } | VersionSpec::V2 { gicc } => {
+                f(unsafe { gicc.as_ref() });
+            }
+            _ => {}
+        }
+    }
+    fn match_v3v4<F>(&self, id: Option<CPUTarget>, f: F)
     where
         F: FnOnce(&LPI, &SGI),
     {
         match &self.version_spec {
             VersionSpec::V3 { gicr } => {
-                let rd = &gicr[id];
+                let rd = if let Some(id) = id {
+                    &gicr[id]
+                } else {
+                    gicr.iter().next().unwrap()
+                };
                 f(rd.lpi_ref(), rd.sgi_ref());
             }
             VersionSpec::V4 { gicr } => {
-                let rd = &gicr[id];
+                let rd = if let Some(id) = id {
+                    &gicr[id]
+                } else {
+                    gicr.iter().next().unwrap()
+                };
                 f(rd.lpi_ref(), rd.sgi_ref());
             }
             _ => {}
         }
     }
 
-    fn irq_disable(&self, intid: IntId) {}
+    pub fn irq_disable(&self, intid: IntId, cpu: Option<CPUTarget>) {
+        self.gicd().set_enable_interrupt(intid, false);
+        self.match_v3v4(cpu, |_, sgi| {
+            if intid.is_private() {
+                sgi.set_enable_interrupt(intid, false);
+            }
+        });
+    }
+}
+
+fn set_cfgr(icfgr: &[ReadWrite<u32, ()>], intid: IntId, trigger: Trigger) {
+    let index = (u32::from(intid) / 16) as usize;
+    let bit = 1 << (((u32::from(intid) % 16) * 2) + 1);
+
+    let v = icfgr[index].get();
+    icfgr[index].set(match trigger {
+        Trigger::Edge => v | bit,
+        Trigger::Level => v & !bit,
+    })
 }
 
 enum VersionSpec {

@@ -3,6 +3,7 @@ use core::{
     ops::Range,
 };
 
+#[derive(Clone, Copy)]
 pub struct CPUTarget {
     pub target_list: u8,
     pub aff1: u8,

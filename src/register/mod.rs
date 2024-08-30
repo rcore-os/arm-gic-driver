@@ -38,7 +38,7 @@ register_structs! {
         /// Interrupt Priority Registers.
         (0x0400 => IPRIORITYR: [ReadWrite<u8>; 1024]),
         /// Interrupt Processor Targets Registers.
-        (0x0800 => ITARGETSR: [ReadWrite<u32>; 0x100]),
+        (0x0800 => ITARGETSR: [ReadWrite<u8>; 1024]),
         /// Interrupt Configuration Registers.
         (0x0c00 => pub ICFGR: [ReadWrite<u32>; 0x40]),
         (0x0d00 => _rsv2),
@@ -109,8 +109,13 @@ impl Distributor {
             self.ICENABLER[index].set(bit);
         }
     }
+
     pub fn set_priority(&self, intid: IntId, priority: u8) {
         self.IPRIORITYR[u32::from(intid) as usize].set(priority)
+    }
+
+    pub fn set_bind_cpu(&self, intid: IntId, target_list: u8) {
+        self.ITARGETSR[u32::from(intid) as usize].set(target_list)
     }
 
     pub fn init(&self) {

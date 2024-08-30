@@ -6,7 +6,7 @@ use tock_registers::{
     registers::{ReadOnly, ReadWrite, WriteOnly},
 };
 
-use super::{current_cpu, CPUTarget, PIDR2};
+use super::{current_cpu, CPUTarget, IntId, PIDR2};
 
 pub type RDv3Vec = RedistributorVec<RedistributorV3>;
 pub type RDv4Vec = RedistributorVec<RedistributorV4>;
@@ -90,20 +90,6 @@ impl<'a, T: RedistributorItem> RedistributorIter<'a, T> {
             _phantom: core::marker::PhantomData,
         }
     }
-
-    pub fn wake_all(&mut self) {
-        for one in self {
-            one.lpi_ref().WAKER.write(WAKER::ProcessorSleep::CLEAR);
-        }
-    }
-
-    pub fn wake_all_wait(&mut self) {
-        for rd in self {
-            while rd.lpi_ref().WAKER.is_set(WAKER::ChildrenAsleep) {
-                spin_loop();
-            }
-        }
-    }
 }
 
 impl<'a, T: RedistributorItem> Iterator for RedistributorIter<'a, T> {
@@ -163,17 +149,17 @@ register_structs! {
         (0x0080 => IGROUPR0: ReadWrite<u32>),
         (0x0084 => IGROUPR_E: ReadWrite<u32>),
         (0x0088 => _rsv1),
-        (0x0100 => pub ISENABLER0: ReadWrite<u32>),
+        (0x0100 => ISENABLER0: ReadWrite<u32>),
         (0x0104 => ISENABLER_E: ReadWrite<u32>),
         (0x0108 => _rsv2),
-        (0x0180 => pub ICENABLER0 : ReadWrite<u32>),
+        (0x0180 => ICENABLER0 : ReadWrite<u32>),
         (0x0184 => ICENABLER_E: ReadWrite<u32>),
         (0x0188 => _rsv3),
         (0x0400 => IPRIORITYR: [ReadWrite<u8>; 28]),
         (0x041C => _rsv4),
         (0x0420 => IPRIORITYR_E: [ReadWrite<u8>; 60]),
         (0x045C => _rsv5),
-        (0x0C00 => ICFGR : [ReadWrite<u32>;5]),
+        (0x0C00 => pub ICFGR : [ReadWrite<u32>;5]),
         (0x0C14 => _rsv6),
         (0xFFFC => @END),
     }
@@ -229,5 +215,20 @@ impl LPI {
         while self.WAKER.is_set(WAKER::ChildrenAsleep) {
             spin_loop();
         }
+    }
+}
+
+impl SGI {
+    pub fn set_enable_interrupt(&self, irq: IntId, enable: bool) {
+        let int_id: u32 = irq.into();
+        let bit = 1 << (int_id % 32);
+        if enable {
+            self.ISENABLER0.set(bit);
+        } else {
+            self.ICENABLER0.set(bit);
+        }
+    }
+    pub fn set_priority(&self, intid: IntId, priority: u8) {
+        self.IPRIORITYR[u32::from(intid) as usize].set(priority)
     }
 }
