@@ -75,7 +75,11 @@ register_bitfields! [
          SGIINTID OFFSET(0) NUMBITS(4) [],
          NSATT OFFSET(15) NUMBITS(1) [],
          CPUTargetList OFFSET(16) NUMBITS(8) [],
-         TargetListFilter OFFSET(24) NUMBITS(2) [],
+         TargetListFilter OFFSET(24) NUMBITS(2) [
+            TargetList=0,
+            AllOther=0b01,
+            Current=0b10,
+         ],
     ],
     IAR [
         INTID OFFSET(0) NUMBITS(10) [],
@@ -141,6 +145,28 @@ impl Distributor {
         //         self.ITARGETSR[i / 4].set(0x01_01_01_01);
         //     }
         // }
+    }
+
+    pub fn sgi(&self, intid: IntId, target: SGITarget) {
+        assert!(intid.is_sgi());
+
+        let mut val = SGIR::SGIINTID.val(intid.into());
+
+        match target {
+            SGITarget::AllOther => {
+                val += SGIR::TargetListFilter::AllOther;
+            }
+            SGITarget::Targets(list) => {
+                let target_list = list
+                    .iter()
+                    .fold(0, |acc, &target| acc | target.cpu_target_list());
+
+                val += SGIR::TargetListFilter::TargetList
+                    + SGIR::CPUTargetList.val(target_list as u32);
+            }
+        }
+
+        self.SGIR.write(val);
     }
 
     // pub fn cpu_num(&self) -> u32 {

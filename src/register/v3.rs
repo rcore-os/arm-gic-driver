@@ -6,7 +6,7 @@ use tock_registers::{
     registers::{ReadOnly, ReadWrite},
 };
 
-use super::{CPUTarget, IntId, PIDR2, SPECIAL_RANGE};
+use super::{CPUTarget, IntId, SGITarget, PIDR2, SPECIAL_RANGE};
 
 pub type RDv3Vec = RedistributorVec<RedistributorV3>;
 pub type RDv4Vec = RedistributorVec<RedistributorV4>;
@@ -219,6 +219,37 @@ pub fn end_interrupt(intid: IntId) {
         asm!("
     msr icc_eoir1_el1, {}", in(reg) intid);
     }
+}
+
+pub fn sgi(intid: IntId, target: SGITarget) {
+    let val = match target {
+        SGITarget::AllOther => {
+            let irm = 0b1;
+            (u64::from(u32::from(intid) & 0x0f) << 24) | (irm << 40)
+        }
+        SGITarget::Targets(list) => {
+            assert!(list.len() > 0);
+            let aff1 = list[0].aff1;
+            let aff2 = list[0].aff2;
+            let aff3 = list[0].aff3;
+            let target_list = list
+                .iter()
+                .fold(0, |acc, target| acc | target.cpu_target_list());
+
+            let irm = 0b0;
+            u64::from(target_list)
+                | (u64::from(aff1) << 16)
+                | (u64::from(u32::from(intid) & 0x0f) << 24)
+                | (u64::from(aff2) << 32)
+                | (irm << 40)
+                | (u64::from(aff3) << 48)
+        }
+    };
+
+    unsafe {
+        asm!("
+    msr icc_sgi1r_el1, {}", in(reg) val);
+    };
 }
 
 impl LPI {

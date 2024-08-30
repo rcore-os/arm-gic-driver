@@ -4,8 +4,14 @@ use core::{
 };
 
 #[derive(Clone, Copy)]
+pub enum SGITarget<'a> {
+    AllOther,
+    Targets(&'a [CPUTarget]),
+}
+
+#[derive(Clone, Copy)]
 pub struct CPUTarget {
-    pub target_list: u8,
+    pub aff0: u8,
     pub aff1: u8,
     pub aff2: u8,
     pub aff3: u8,
@@ -14,7 +20,7 @@ pub struct CPUTarget {
 impl From<MPID> for CPUTarget {
     fn from(value: MPID) -> Self {
         Self {
-            target_list: value.aff0,
+            aff0: value.aff0,
             aff1: value.aff1,
             aff2: value.aff2,
             aff3: value.aff3 as _,
@@ -22,11 +28,22 @@ impl From<MPID> for CPUTarget {
     }
 }
 impl CPUTarget {
+    pub const CORE0: CPUTarget = CPUTarget {
+        aff0: 0,
+        aff1: 0,
+        aff2: 0,
+        aff3: 0,
+    };
+
     pub(crate) fn affinity(&self) -> u32 {
-        self.target_list as u32
+        self.aff0 as u32
             | (self.aff1 as u32) << 8
             | (self.aff2 as u32) << 16
             | (self.aff3 as u32) << 24
+    }
+
+    pub(crate) fn cpu_target_list(&self) -> u8 {
+        1 << self.aff0
     }
 }
 

@@ -25,11 +25,14 @@ pub enum Config {
     V4 { gicr: NonNull<u8> },
 }
 
-pub struct IrqConfig {
+pub struct IrqConfig<'a> {
     pub intid: IntId,
+    /// Not used for SPI.
     pub trigger: Trigger,
+    /// 0xff is the minimum priority.
     pub priority: u8,
-    pub cpu: Option<CPUTarget>,
+    /// If it is empty, irq will bind to core 0.
+    pub cpu: &'a [CPUTarget],
 }
 
 pub struct Gic {
@@ -88,19 +91,18 @@ impl Gic {
     }
 
     pub fn current_cpu_setup(&self) {
-        self.match_v3v4(Some(current_cpu()), |lpi, _| {
-            lpi.wake();
-        });
-
-        match self.version_spec {
-            VersionSpec::V1 { gicc } | VersionSpec::V2 { gicc } => unsafe {
-                gicc.as_ref().enable();
+        self.match_version(
+            None,
+            |grcc| {
+                grcc.enable();
             },
-            VersionSpec::V3 { .. } | VersionSpec::V4 { .. } => {
+            |lpi, _| {
+                lpi.wake();
                 v3::enable_group0();
                 v3::enable_group1();
-            }
-        }
+            },
+        );
+
         self.set_priority_mask(0xff);
     }
 
@@ -119,111 +121,99 @@ impl Gic {
         self.gicd().init();
     }
 
+    /// Enable an interrupt.
+    ///  
     pub fn irq_enable(&self, cfg: IrqConfig) {
-        self.gicd().set_enable_interrupt(cfg.intid, true);
+        let intid = cfg.intid;
+        self.gicd().set_enable_interrupt(intid, true);
+        self.gicd().set_priority(cfg.intid, cfg.priority);
+        let core0 = [CPUTarget::CORE0];
+        let target_list = if cfg.cpu.is_empty() { &core0 } else { cfg.cpu };
 
-        self.match_v1v2(|_| {
-            set_cfgr(&self.gicd().ICFGR, cfg.intid, cfg.trigger);
-            self.gicd().set_priority(cfg.intid, cfg.priority);
-            self.gicd().set_bind_cpu(cfg.intid, 0);
-        });
+        self.match_version_no_rd(
+            |_| {
+                self.gicd().set_bind_cpu(
+                    intid,
+                    target_list
+                        .iter()
+                        .fold(0, |acc, &cpu| acc | cpu.cpu_target_list()),
+                );
+            },
+            || {},
+        );
 
-        self.match_v3v4(cfg.cpu, |_, sgi| {
-            if cfg.intid.is_private() {
-                sgi.set_enable_interrupt(cfg.intid, true);
-                set_cfgr(&sgi.ICFGR, cfg.intid, cfg.trigger);
-
-                sgi.set_priority(cfg.intid, cfg.priority);
-                self.gicd().set_bind_cpu(cfg.intid, 0);
-            } else {
-                set_cfgr(&self.gicd().ICFGR, cfg.intid, cfg.trigger);
-                self.gicd().set_priority(cfg.intid, cfg.priority);
-            }
-        });
-    }
-    fn match_v1v2<F, O>(&self, f: F) -> Option<O>
-    where
-        F: FnOnce(&CpuInterface) -> O,
-    {
-        match &self.version_spec {
-            VersionSpec::V1 { gicc } | VersionSpec::V2 { gicc } => {
-                Some(f(unsafe { gicc.as_ref() }))
-            }
-            _ => None,
+        for target in target_list {
+            self.match_version(
+                Some(*target),
+                |_| {},
+                |_, sgi| {
+                    if cfg.intid.is_private() {
+                        sgi.set_enable_interrupt(cfg.intid, true);
+                        if !intid.is_sgi() {
+                            set_cfgr(&sgi.ICFGR, cfg.intid, cfg.trigger);
+                        }
+                        sgi.set_priority(cfg.intid, cfg.priority);
+                    } else {
+                        set_cfgr(&self.gicd().ICFGR, cfg.intid, cfg.trigger);
+                    }
+                },
+            );
         }
     }
-    fn match_v3v4<F, O>(&self, id: Option<CPUTarget>, f: F) -> Option<O>
+
+    fn match_version<FV1, FV3, O>(&self, target: Option<CPUTarget>, fv1: FV1, fv3: FV3) -> O
     where
-        F: FnOnce(&LPI, &SGI) -> O,
+        FV1: FnOnce(&CpuInterface) -> O,
+        FV3: FnOnce(&LPI, &SGI) -> O,
     {
         match &self.version_spec {
+            VersionSpec::V1 { gicc } | VersionSpec::V2 { gicc } => fv1(unsafe { gicc.as_ref() }),
             VersionSpec::V3 { gicr } => {
-                let rd = &gicr[id.unwrap_or(current_cpu())];
-                Some(f(rd.lpi_ref(), rd.sgi_ref()))
+                let rd = &gicr[target.unwrap_or(current_cpu())];
+                fv3(rd.lpi_ref(), rd.sgi_ref())
             }
             VersionSpec::V4 { gicr } => {
-                let rd = &gicr[id.unwrap_or(current_cpu())];
-                Some(f(rd.lpi_ref(), rd.sgi_ref()))
+                let rd = &gicr[target.unwrap_or(current_cpu())];
+                fv3(rd.lpi_ref(), rd.sgi_ref())
             }
-            _ => None,
         }
     }
 
-    pub fn irq_disable(&self, intid: IntId, cpu: Option<CPUTarget>) {
+    fn match_version_no_rd<FV1, FV3, O>(&self, fv1: FV1, fv3: FV3) -> O
+    where
+        FV1: FnOnce(&CpuInterface) -> O,
+        FV3: FnOnce() -> O,
+    {
+        match &self.version_spec {
+            VersionSpec::V1 { gicc } | VersionSpec::V2 { gicc } => fv1(unsafe { gicc.as_ref() }),
+            VersionSpec::V3 { .. } | VersionSpec::V4 { .. } => fv3(),
+        }
+    }
+
+    pub fn irq_disable(&self, intid: IntId) {
         self.gicd().set_enable_interrupt(intid, false);
-        self.match_v3v4(cpu, |_, sgi| {
-            if intid.is_private() {
-                sgi.set_enable_interrupt(intid, false);
-            }
-        });
     }
 
     pub fn get_and_acknowledge_interrupt(&self) -> Option<IntId> {
-        if let Some(res) = self.match_v1v2(|gicc| gicc.get_and_acknowledge_interrupt()) {
-            return res;
-        }
-        if matches!(
-            self.version_spec,
-            VersionSpec::V3 { .. } | VersionSpec::V4 { .. }
-        ) {
-            return v3::get_and_acknowledge_interrupt();
-        }
-        None
+        self.match_version_no_rd(
+            |gicc| gicc.get_and_acknowledge_interrupt(),
+            || v3::get_and_acknowledge_interrupt(),
+        )
     }
 
     pub fn end_interrupt(&self, intid: IntId) {
-        self.match_v1v2(|gicc| gicc.end_interrupt(intid));
-        if matches!(
-            self.version_spec,
-            VersionSpec::V3 { .. } | VersionSpec::V4 { .. }
-        ) {
-            return v3::end_interrupt(intid);
-        }
+        self.match_version_no_rd(
+            |gicc| gicc.end_interrupt(intid),
+            || v3::end_interrupt(intid),
+        );
     }
 
-    pub fn send_sgi(&self, intid: IntId, cpu_id: Option<CPUTarget>) {
+    pub fn send_sgi(&self, intid: IntId, target: SGITarget) {
         assert!(intid.is_sgi());
-
-        let sgi_value = match cpu_id {
-            None => {
-                let irm = 0b1;
-                (u64::from(u32::from(intid) & 0x0f) << 24) | (irm << 40)
-            }
-            Some(cpu) => {
-                let irm = 0b0;
-                u64::from(cpu.target_list)
-                    | (u64::from(cpu.aff1) << 16)
-                    | (u64::from(u32::from(intid) & 0x0f) << 24)
-                    | (u64::from(cpu.aff2) << 32)
-                    | (irm << 40)
-                    | (u64::from(cpu.aff3) << 48)
-            }
-        };
-
-        unsafe {
-            asm!("
-    msr icc_sgi1r_el1, {}", in(reg) sgi_value);
-        }
+        self.match_version_no_rd(
+            |_| self.gicd().sgi(intid, target),
+            || v3::sgi(intid, target),
+        );
     }
 }
 
