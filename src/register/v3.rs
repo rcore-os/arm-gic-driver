@@ -62,16 +62,6 @@ impl<T: RedistributorItem> RedistributorVec<T> {
     pub fn iter(&self) -> RedistributorIter<T> {
         RedistributorIter::new(self.ptr)
     }
-
-    pub fn wake(&self) {
-        let rd = &self[current_cpu()];
-
-        rd.lpi_ref().WAKER.write(WAKER::ProcessorSleep::CLEAR);
-
-        while rd.lpi_ref().WAKER.is_set(WAKER::ChildrenAsleep) {
-            spin_loop();
-        }
-    }
 }
 
 pub struct RedistributorIter<'a, T: RedistributorItem> {

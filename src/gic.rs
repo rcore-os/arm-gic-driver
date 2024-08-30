@@ -158,19 +158,11 @@ impl Gic {
     {
         match &self.version_spec {
             VersionSpec::V3 { gicr } => {
-                let rd = if let Some(id) = id {
-                    &gicr[id]
-                } else {
-                    gicr.iter().next().unwrap()
-                };
+                let rd = &gicr[id.unwrap_or(current_cpu())];
                 f(rd.lpi_ref(), rd.sgi_ref());
             }
             VersionSpec::V4 { gicr } => {
-                let rd = if let Some(id) = id {
-                    &gicr[id]
-                } else {
-                    gicr.iter().next().unwrap()
-                };
+                let rd = &gicr[id.unwrap_or(current_cpu())];
                 f(rd.lpi_ref(), rd.sgi_ref());
             }
             _ => {}
