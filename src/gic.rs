@@ -1,7 +1,7 @@
-use core::{arch::asm, ptr::NonNull};
+use core::{arch::asm, fmt::Display, ptr::NonNull};
 
 use tock_registers::{
-    interfaces::{ReadWriteable, Readable, Writeable},
+    interfaces::{Readable, Writeable},
     registers::ReadWrite,
 };
 
@@ -141,31 +141,31 @@ impl Gic {
             }
         });
     }
-    fn match_v1v2<F>(&self, f: F)
+    fn match_v1v2<F, O>(&self, f: F) -> Option<O>
     where
-        F: FnOnce(&CpuInterface),
+        F: FnOnce(&CpuInterface) -> O,
     {
         match &self.version_spec {
             VersionSpec::V1 { gicc } | VersionSpec::V2 { gicc } => {
-                f(unsafe { gicc.as_ref() });
+                Some(f(unsafe { gicc.as_ref() }))
             }
-            _ => {}
+            _ => None,
         }
     }
-    fn match_v3v4<F>(&self, id: Option<CPUTarget>, f: F)
+    fn match_v3v4<F, O>(&self, id: Option<CPUTarget>, f: F) -> Option<O>
     where
-        F: FnOnce(&LPI, &SGI),
+        F: FnOnce(&LPI, &SGI) -> O,
     {
         match &self.version_spec {
             VersionSpec::V3 { gicr } => {
                 let rd = &gicr[id.unwrap_or(current_cpu())];
-                f(rd.lpi_ref(), rd.sgi_ref());
+                Some(f(rd.lpi_ref(), rd.sgi_ref()))
             }
             VersionSpec::V4 { gicr } => {
                 let rd = &gicr[id.unwrap_or(current_cpu())];
-                f(rd.lpi_ref(), rd.sgi_ref());
+                Some(f(rd.lpi_ref(), rd.sgi_ref()))
             }
-            _ => {}
+            _ => None,
         }
     }
 
@@ -176,6 +176,75 @@ impl Gic {
                 sgi.set_enable_interrupt(intid, false);
             }
         });
+    }
+
+    pub fn get_and_acknowledge_interrupt(&self) -> Option<IntId> {
+        if let Some(res) = self.match_v1v2(|gicc| gicc.get_and_acknowledge_interrupt()) {
+            return res;
+        }
+        if matches!(
+            self.version_spec,
+            VersionSpec::V3 { .. } | VersionSpec::V4 { .. }
+        ) {
+            return v3::get_and_acknowledge_interrupt();
+        }
+        None
+    }
+
+    pub fn end_interrupt(&self, intid: IntId) {
+        self.match_v1v2(|gicc| gicc.end_interrupt(intid));
+        if matches!(
+            self.version_spec,
+            VersionSpec::V3 { .. } | VersionSpec::V4 { .. }
+        ) {
+            return v3::end_interrupt(intid);
+        }
+    }
+
+    pub fn send_sgi(&self, intid: IntId, cpu_id: Option<CPUTarget>) {
+        assert!(intid.is_sgi());
+
+        let sgi_value = match cpu_id {
+            None => {
+                let irm = 0b1;
+                (u64::from(u32::from(intid) & 0x0f) << 24) | (irm << 40)
+            }
+            Some(cpu) => {
+                let irm = 0b0;
+                u64::from(cpu.target_list)
+                    | (u64::from(cpu.aff1) << 16)
+                    | (u64::from(u32::from(intid) & 0x0f) << 24)
+                    | (u64::from(cpu.aff2) << 32)
+                    | (irm << 40)
+                    | (u64::from(cpu.aff3) << 48)
+            }
+        };
+
+        unsafe {
+            asm!("
+    msr icc_sgi1r_el1, {}", in(reg) sgi_value);
+        }
+    }
+}
+
+impl Display for Gic {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let com = match self.gicd().implementer() {
+            0x43b => "Arm",
+            _ => "unknown",
+        };
+
+        write!(
+            f,
+            "{}-GIC{}",
+            com,
+            match &self.version_spec {
+                VersionSpec::V1 { .. } => "v1",
+                VersionSpec::V2 { .. } => "v2",
+                VersionSpec::V3 { .. } => "v3",
+                VersionSpec::V4 { .. } => "v4",
+            }
+        )
     }
 }
 
@@ -196,17 +265,3 @@ enum VersionSpec {
     V3 { gicr: RDv3Vec },
     V4 { gicr: RDv4Vec },
 }
-
-// fn irq_enable(&self, cfg: IrqConfig);
-// fn irq_disable(&self, intid: IntId);
-// fn set_priority_mask(&self, priority: u8);
-// /// Gets the ID of the highest priority signalled interrupt, and acknowledges it.
-// ///
-// /// Returns `None` if there is no pending interrupt of sufficient priority.
-// fn get_and_acknowledge_interrupt(&self) -> Option<IntId>;
-
-// /// Informs the interrupt controller that the CPU has completed processing the given interrupt.
-// /// This drops the interrupt priority and deactivates the interrupt.
-// fn end_interrupt(&self, intid: IntId);
-
-// fn send_sgi(&self, intid: IntId, cpu_id: Option<CPUTarget>);

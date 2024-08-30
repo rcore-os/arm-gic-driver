@@ -1,7 +1,7 @@
 pub mod v2;
 pub mod v3;
 
-use core::{arch::asm, fmt::Display, ptr::NonNull};
+use core::arch::asm;
 
 use tock_registers::{
     interfaces::*,
@@ -143,9 +143,9 @@ impl Distributor {
         // }
     }
 
-    pub fn cpu_num(&self) -> u32 {
-        self.TYPER.read(TYPER::CPUNumber) + 1
-    }
+    // pub fn cpu_num(&self) -> u32 {
+    //     self.TYPER.read(TYPER::CPUNumber) + 1
+    // }
 }
 
 pub fn mpid() -> MPID {

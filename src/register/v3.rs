@@ -3,10 +3,10 @@ use core::{arch::asm, hint::spin_loop, ops::Index, ptr::NonNull};
 use tock_registers::{
     interfaces::*,
     register_bitfields, register_structs,
-    registers::{ReadOnly, ReadWrite, WriteOnly},
+    registers::{ReadOnly, ReadWrite},
 };
 
-use super::{current_cpu, CPUTarget, IntId, PIDR2};
+use super::{CPUTarget, IntId, PIDR2, SPECIAL_RANGE};
 
 pub type RDv3Vec = RedistributorVec<RedistributorV3>;
 pub type RDv4Vec = RedistributorVec<RedistributorV4>;
@@ -195,6 +195,29 @@ pub fn enable_group1() {
     ISB
         "
         )
+    }
+}
+pub fn get_and_acknowledge_interrupt() -> Option<IntId> {
+    let x: usize;
+
+    unsafe {
+        asm!("
+    mrs {}, icc_iar1_el1", out(reg) x);
+    }
+    let intid = x as u32;
+
+    if intid == SPECIAL_RANGE.start {
+        None
+    } else {
+        Some(unsafe { IntId::raw(intid) })
+    }
+}
+
+pub fn end_interrupt(intid: IntId) {
+    let intid = u32::from(intid) as usize;
+    unsafe {
+        asm!("
+    msr icc_eoir1_el1, {}", in(reg) intid);
     }
 }
 
