@@ -39,6 +39,7 @@ pub struct Gic {
     gicd: NonNull<Distributor>,
     version_spec: VersionSpec,
 }
+unsafe impl Send for Gic {}
 
 impl Gic {
     pub fn new(gicd: NonNull<u8>, config: Config) -> Result<Self> {

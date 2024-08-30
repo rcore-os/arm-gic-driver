@@ -228,7 +228,9 @@ pub fn sgi(intid: IntId, target: SGITarget) {
             (u64::from(u32::from(intid) & 0x0f) << 24) | (irm << 40)
         }
         SGITarget::Targets(list) => {
-            assert!(list.len() > 0);
+            if list.is_empty() {
+                return;
+            }
             let aff1 = list[0].aff1;
             let aff2 = list[0].aff2;
             let aff3 = list[0].aff3;

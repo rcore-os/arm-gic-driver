@@ -157,6 +157,10 @@ impl Distributor {
                 val += SGIR::TargetListFilter::AllOther;
             }
             SGITarget::Targets(list) => {
+                if list.is_empty() {
+                    return;
+                }
+
                 let target_list = list
                     .iter()
                     .fold(0, |acc, &target| acc | target.cpu_target_list());
