@@ -8,6 +8,7 @@ use tock_registers::{
     register_bitfields, register_structs,
     registers::{ReadOnly, ReadWrite, WriteOnly},
 };
+use v3::IROUTER;
 
 use crate::define::*;
 
@@ -52,7 +53,7 @@ register_structs! {
         (0x0fec => _rsv5),
         /// v3
 
-        (0x6100 => IROUTER: [ReadWrite<u64>; 987]),
+        (0x6100 => IROUTER: [ReadWrite<u64, IROUTER::Register>; 987]),
         (0x7FD8 => _rsv6),
         (0xFFE8 => PIDR2 : ReadOnly<u32, PIDR2::Register>),
         (0xFFEC => _rsv7),
@@ -96,16 +97,7 @@ register_bitfields! [
         ArchRev OFFSET(4) NUMBITS(4) [],
     ],
 
-    IROUTER [
-        AFF0 OFFSET(0) NUMBITS(8) [],
-        AFF1 OFFSET(8) NUMBITS(8) [],
-        AFF2 OFFSET(16) NUMBITS(8) [],
-        InterruptRoutingMode OFFSET(31) NUMBITS(1) [
-            Aff=0,
-            Any=1,
-        ],
-        AFF3 OFFSET(32) NUMBITS(8) [],
-    ]
+
 ];
 
 impl Distributor {
@@ -146,18 +138,9 @@ impl Distributor {
 
     pub fn disable_all_interrupts(&self) {
         for i in (0..self.irq_line_max() as usize).step_by(32) {
-            self.ICENABLER[i / 32].set(u32::MAX);
-            self.ICPENDR[i / 32].set(u32::MAX);
+            // self.ICENABLER[i / 32].set(u32::MAX);
+            // self.ICPENDR[i / 32].set(u32::MAX);
         }
-    }
-
-    pub fn init(&self) {
-        self.CTLR.write(
-            CTLR::ARE_S::SET
-                // + CTLR::ARE_NS::SET
-                + CTLR::EnableGrp0::SET, // + CTLR::EnableGrp1S::SET
-                                         // + CTLR::EnableGrp1NS::SET,
-        );
     }
 
     pub fn sgi(&self, intid: IntId, target: SGITarget) {
@@ -192,7 +175,15 @@ impl Distributor {
         }
     }
 
-    pub fn iroute(&self, intid: IntId) {}
+    pub fn set_route(&self, intid: IntId, target: &CPUTarget) {
+        self.IROUTER[u32::from(intid) as usize].write(
+            IROUTER::InterruptRoutingMode::Aff
+                + IROUTER::AFF0.val(target.aff0 as _)
+                + IROUTER::AFF1.val(target.aff1 as _)
+                + IROUTER::AFF2.val(target.aff2 as _)
+                + IROUTER::AFF3.val(target.aff3 as _),
+        );
+    }
     // pub fn cpu_num(&self) -> u32 {
     //     self.TYPER.read(TYPER::CPUNumber) + 1
     // }

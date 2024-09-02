@@ -165,6 +165,17 @@ register_bitfields! [
         Last OFFSET(4) NUMBITS(1) [],
         Affinity OFFSET(32) NUMBITS(32) [],
     ],
+
+    pub IROUTER [
+        AFF0 OFFSET(0) NUMBITS(8) [],
+        AFF1 OFFSET(8) NUMBITS(8) [],
+        AFF2 OFFSET(16) NUMBITS(8) [],
+        InterruptRoutingMode OFFSET(31) NUMBITS(1) [
+            Aff=0,
+            Any=1,
+        ],
+        AFF3 OFFSET(32) NUMBITS(8) [],
+    ]
 ];
 register_bitfields! [
     u32,
@@ -220,6 +231,21 @@ pub fn end_interrupt(intid: IntId) {
     msr icc_eoir1_el1, {}", in(reg) intid);
     }
 }
+pub fn enable_system_register_access() {
+    let x: usize = 1;
+    unsafe {
+        asm!("
+    msr icc_sre_el1, {}", in(reg) x);
+    }
+}
+
+pub fn icc_ctlr() {
+    let x: usize = 0;
+    unsafe {
+        asm!("
+    msr icc_ctlr_el1, {}", in(reg) x);
+    }
+}
 
 pub fn sgi(intid: IntId, target: SGITarget) {
     let val = match target {
@@ -252,6 +278,14 @@ pub fn sgi(intid: IntId, target: SGITarget) {
         asm!("
     msr icc_sgi1r_el1, {}", in(reg) val);
     };
+}
+
+pub fn get_running_priority() -> u8 {
+    let mut val: u64;
+    unsafe {
+        asm!("mrs {}, ICC_RPR_EL1", out(reg) val);
+    }
+    (val & 0xff) as u8
 }
 
 impl LPI {

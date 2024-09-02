@@ -1,5 +1,6 @@
 use core::{arch::asm, fmt::Display, ptr::NonNull};
 
+use log::{info, trace};
 use tock_registers::{
     interfaces::{Readable, Writeable},
     registers::ReadWrite,
@@ -10,7 +11,10 @@ use crate::{
     register::{
         current_cpu,
         v2::{self, CpuInterface},
-        v3::{self, RDv3Vec, RDv4Vec, RedistributorItem, LPI, SGI},
+        v3::{
+            self, enable_system_register_access, icc_ctlr, RDv3Vec, RDv4Vec, RedistributorItem,
+            LPI, SGI,
+        },
         Distributor, CTLR,
     },
 };
@@ -99,10 +103,13 @@ impl Gic {
                 grcc.enable();
             },
             |lpi, sgi| {
+                enable_system_register_access();
                 lpi.wake();
                 sgi.set_all_group1();
+                v3::icc_ctlr();
                 v3::enable_group0();
                 v3::enable_group1();
+                info!("current priority mask: {}", v3::get_running_priority());
             },
         );
 
@@ -187,15 +194,13 @@ impl Gic {
                 Some(*target),
                 |_| {},
                 |_, sgi| {
-                    if cfg.intid.is_private() {
-                        sgi.set_enable_interrupt(cfg.intid, true);
-                        if !intid.is_sgi() {
-                            set_cfgr(&sgi.ICFGR, cfg.intid, cfg.trigger);
-                        }
-                        sgi.set_priority(cfg.intid, cfg.priority);
-                    } else {
-                        set_cfgr(&self.gicd().ICFGR, cfg.intid, cfg.trigger);
+                    if intid.is_private() {
+                        trace!("sgi enable ");
+                        sgi.set_enable_interrupt(intid, true);
+                        sgi.set_priority(intid, cfg.priority);
                     }
+                    set_cfgr(&self.gicd().ICFGR, intid, cfg.trigger);
+                    self.gicd().set_route(intid, target);
                 },
             );
         }
@@ -255,6 +260,10 @@ impl Gic {
             || v3::sgi(intid, target),
         );
     }
+
+    // fn set_group(&self, intid: IntId, group: bool){
+
+    // }
 }
 
 impl Display for Gic {
@@ -279,6 +288,10 @@ impl Display for Gic {
 }
 
 fn set_cfgr(icfgr: &[ReadWrite<u32, ()>], intid: IntId, trigger: Trigger) {
+    if intid.is_sgi() {
+        return;
+    }
+
     let index = (u32::from(intid) / 16) as usize;
     let bit = 1 << (((u32::from(intid) % 16) * 2) + 1);
 
