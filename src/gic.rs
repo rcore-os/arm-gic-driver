@@ -6,15 +6,13 @@ use tock_registers::{
     registers::ReadWrite,
 };
 
+use crate::register::v3::icc_ctlr;
 use crate::{
     define::*,
     register::{
         current_cpu,
         v2::{self, CpuInterface},
-        v3::{
-            self, enable_system_register_access, icc_ctlr, RDv3Vec, RDv4Vec, RedistributorItem,
-            LPI, SGI,
-        },
+        v3::{self, enable_system_register_access, RDv3Vec, RDv4Vec, RedistributorItem, LPI, SGI},
         Distributor, CTLR,
     },
 };
