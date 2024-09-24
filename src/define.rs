@@ -162,6 +162,7 @@ pub enum Trigger {
     Level,
 }
 
+#[derive(Debug, Clone)]
 pub enum GicError {
     Notimplemented,
 }
