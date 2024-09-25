@@ -1,6 +1,6 @@
 use core::{arch::asm, fmt::Display, ptr::NonNull};
 
-use log::{info, trace};
+use log::{debug, info, trace};
 use tock_registers::{
     interfaces::{Readable, Writeable},
     registers::ReadWrite,
@@ -102,10 +102,10 @@ impl Gic {
             },
             |lpi, sgi| {
                 enable_system_register_access();
+                debug!("register access enabled");
                 lpi.wake();
                 sgi.set_all_group1();
                 v3::icc_ctlr();
-                v3::enable_group0();
                 v3::enable_group1();
                 info!("current priority mask: {}", v3::get_running_priority());
             },
