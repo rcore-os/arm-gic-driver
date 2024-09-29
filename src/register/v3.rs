@@ -1,4 +1,4 @@
-use core::{arch::asm, hint::spin_loop, ops::Index, ptr::NonNull};
+use core::{arch::asm, hint::spin_loop, ops::Index, ptr::NonNull, u32};
 
 use tock_registers::{
     interfaces::*,
@@ -136,8 +136,9 @@ register_structs! {
     #[allow(non_snake_case)]
     pub SGI {
         (0x0000 => _rsv0),
-        (0x0080 => IGROUPR0: ReadWrite<u32>),
-        (0x0084 => IGROUPR_E: [ReadWrite<u32>; 2]),
+        // (0x0080 => IGROUPR0: ReadWrite<u32>),
+        // (0x0084 => IGROUPR_E: [ReadWrite<u32>; 2]),
+        (0x0080 => IGROUPR: [ReadWrite<u32>; 3]),
         (0x008C => _rsv1),
         (0x0100 => ISENABLER0: ReadWrite<u32>),
         (0x0104 => ISENABLER_E: [ReadWrite<u32>;2]),
@@ -230,16 +231,38 @@ pub fn end_interrupt(intid: IntId) {
     msr icc_eoir1_el1, {}", in(reg) intid);
     }
 }
+
+bitflags::bitflags! {
+    pub struct SRE: u64 {
+        const SRE = 1;
+        const DFB = 1 << 1;
+        const DIB = 1 << 2;
+        const ENABLE = 1 << 3;
+    }
+}
+
 pub fn enable_system_register_access() {
-    let x: usize = 1;
     unsafe {
+        let r: u64;
         asm!("
-    msr icc_sre_el1, {}", in(reg) x);
+    mrs {}, icc_sre_el1", out(reg) r);
+        let mut reg = SRE::from_bits_truncate(r);
+        if !reg.contains(SRE::SRE) {
+            reg |= SRE::SRE | SRE::DFB | SRE::DIB;
+            asm!("
+    msr icc_sre_el1, {}", in(reg) reg.bits());
+        }
+
+        // let x = SRE::all().bits();
+        // unsafe {
+        //     asm!("
+        // msr icc_sre_el1, {}", in(reg) x);
+        // }
     }
 }
 
 pub fn icc_ctlr() {
-    let x: usize = 0;
+    let x: usize = 1;
     unsafe {
         asm!("
     msr icc_ctlr_el1, {}", in(reg) x);
@@ -312,6 +335,8 @@ impl SGI {
     }
 
     pub fn set_all_group1(&self) {
-        self.IGROUPR0.set(u32::MAX);
+        for one in &self.IGROUPR {
+            one.set(u32::MAX);
+        }
     }
 }

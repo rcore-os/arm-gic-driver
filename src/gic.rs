@@ -258,10 +258,6 @@ impl Gic {
             || v3::sgi(intid, target),
         );
     }
-
-    // fn set_group(&self, intid: IntId, group: bool){
-
-    // }
 }
 
 impl Display for Gic {
