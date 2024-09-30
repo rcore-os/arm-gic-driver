@@ -166,3 +166,17 @@ pub enum Trigger {
 pub enum GicError {
     Notimplemented,
 }
+
+pub type GicResult<T = ()> = core::result::Result<T, GicError>;
+
+pub trait GicGeneric {
+    fn get_and_acknowledge_interrupt(&self) -> Option<IntId>;
+    fn end_interrupt(&self, intid: IntId);
+    fn irq_max_size(&self) -> usize;
+    fn irq_enable(&mut self, intid: IntId);
+    fn irq_disable(&mut self, intid: IntId);
+    fn set_priority(&mut self, intid: IntId, priority: usize);
+    fn set_triger(&mut self, intid: IntId, triger: Trigger);
+    fn set_bind_cpu(&mut self, intid: IntId, cpu_list: &[CPUTarget]);
+    fn current_cpu_setup(&self);
+}
