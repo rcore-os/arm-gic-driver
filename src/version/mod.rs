@@ -1,3 +1,5 @@
+use core::u32;
+
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 use v3::IROUTER;
 
@@ -36,7 +38,8 @@ register_structs! {
         (0x0800 => ITARGETSR: [ReadWrite<u8>; 1024]),
         /// Interrupt Configuration Registers.
         (0x0c00 => pub ICFGR: [ReadWrite<u32>; 0x40]),
-        (0x0d00 => _rsv2),
+        (0x0d00 => pub IGRPMODR: [ReadWrite<u32>; 32]),
+        (0x0d80 => _rsv2),
         /// Software Generated Interrupt Register.
         (0x0f00 => SGIR: WriteOnly<u32, SGIR::Register>),
         (0x0f04 => _rsv3),
@@ -47,7 +50,7 @@ register_structs! {
         (0x0fec => _rsv5),
         /// v3
 
-        (0x6100 => IROUTER: [ReadWrite<u64, IROUTER::Register>; 987]),
+        (0x6000 => IROUTER: [ReadWrite<u64, IROUTER::Register>; 1019]),
         (0x7FD8 => _rsv6),
         (0xFFE8 => PIDR2 : ReadOnly<u32, PIDR2::Register>),
         (0xFFEC => _rsv7),
@@ -62,6 +65,8 @@ register_bitfields! [
         EnableGrp1S OFFSET(2) NUMBITS(1) [],
         ARE_S OFFSET(4) NUMBITS(1) [],
         ARE_NS OFFSET(5) NUMBITS(1) [],
+        DS OFFSET(6) NUMBITS(1) [],
+        RWP OFFSET(31) NUMBITS(1) [],
     ],
     TYPER [
         ITLinesNumber OFFSET(0) NUMBITS(5) [],
@@ -131,9 +136,11 @@ impl Distributor {
     }
 
     pub fn disable_all_interrupts(&self) {
-        for i in (0..self.irq_line_max() as usize).step_by(32) {
-            // self.ICENABLER[i / 32].set(u32::MAX);
-            // self.ICPENDR[i / 32].set(u32::MAX);
+        for reg in &self.ICENABLER{
+            reg.set(u32::MAX);
+        }
+        for reg in &self.ICPENDR{
+            reg.set(u32::MAX);
         }
     }
 

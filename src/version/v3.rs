@@ -1,8 +1,14 @@
-use core::{arch::asm, ops::Index, ptr::NonNull};
+use core::{arch::asm, hint::spin_loop, marker::PhantomData, ops::Index, ptr::NonNull, u32};
 
+use log::debug;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
 use super::*;
+
+const GICC_SRE_SRE: usize = 1 << 0;
+const GICC_SRE_DFB: usize = 1 << 1;
+const GICC_SRE_DIB: usize = 1 << 2;
+const GICC_SRE_ENABLE: usize = 1 << 3;
 
 pub struct GicV3 {
     gicd: NonNull<Distributor>,
@@ -13,35 +19,95 @@ impl GicV3 {
     pub fn new(gicd: NonNull<u8>, gicr: NonNull<u8>) -> GicResult<Self> {
         let mut s = Self {
             gicd: gicd.cast(),
-            gicr: gicr.cast(),
+            gicr,
         };
-
+        s.init_gicd()?;
+        s.init_gicr()?;
         Ok(s)
     }
 
     fn gicd(&self) -> &Distributor {
         unsafe { self.gicd.as_ref() }
     }
+
+    fn rd_slice<'a>(&'a self) -> RDv3Slice<'a> {
+        RDv3Slice::new(self.gicr)
+    }
+
+    fn init_gicd(&mut self) -> GicResult<()> {
+        // Disable the distributor.
+        self.gicd().CTLR.set(0);
+        self.wait_ctlr();
+
+        debug!("disable all interrupts, and default to group 1");
+
+        for reg in self.gicd().ICENABLER.iter() {
+            reg.set(u32::MAX);
+        }
+
+        for reg in self.gicd().ICPENDR.iter() {
+            reg.set(u32::MAX);
+        }
+
+        for reg in self.gicd().IGROUPR.iter() {
+            reg.set(u32::MAX);
+        }
+
+        if !self.is_one_ns_security() {
+            for reg in self.gicd().IGRPMODR.iter() {
+                reg.set(u32::MAX);
+            }
+        }
+
+        self.wait_ctlr();
+
+        if self.is_one_ns_security() {
+            self.gicd()
+                .CTLR
+                .write(CTLR::ARE_S.val(1) + CTLR::EnableGrp1NS.val(1));
+        } else {
+            self.gicd()
+                .CTLR
+                .write(CTLR::ARE_NS.val(1) + CTLR::EnableGrp1NS.val(1));
+        }
+
+        Ok(())
+    }
+
+    fn init_gicr(&mut self) -> GicResult<()> {
+        for rd in self.rd_slice().iter() {
+            rd.lpi.wake();
+        }
+        Ok(())
+    }
+
+    fn is_one_ns_security(&self) -> bool {
+        self.gicd().CTLR.read(CTLR::DS) > 0
+    }
+
+    fn wait_ctlr(&self) {
+        while self.gicd().CTLR.is_set(CTLR::RWP) {
+            spin_loop();
+        }
+    }
 }
 
 unsafe impl Send for GicV3 {}
 unsafe impl Sync for GicV3 {}
 
-pub type RDv3Vec = RedistributorVec<RedistributorV3>;
-pub type RDv4Vec = RedistributorVec<RedistributorV4>;
+pub type RDv3Slice<'a> = RedistributorSlice<'a, RedistributorV3>;
+pub type RDv4Slice<'a> = RedistributorSlice<'a, RedistributorV4>;
 
 pub trait RedistributorItem {
     fn lpi_ref(&self) -> &LPI;
     fn sgi_ref(&self) -> &SGI;
 }
 
-#[repr(align(0x10000))]
 pub(crate) struct RedistributorV3 {
     pub lpi: LPI,
     pub sgi: SGI,
 }
 
-#[repr(align(0x10000))]
 pub(crate) struct RedistributorV4 {
     pub lpi: LPI,
     pub sgi: SGI,
@@ -65,38 +131,38 @@ impl RedistributorItem for RedistributorV4 {
         &self.sgi
     }
 }
-pub struct RedistributorVec<T: RedistributorItem> {
-    ptr: NonNull<u8>,
-    _marker: core::marker::PhantomData<T>,
+pub struct RedistributorSlice<'a, T: RedistributorItem> {
+    ptr: NonNull<T>,
+    _phantom: PhantomData<&'a T>,
 }
 
-impl<T: RedistributorItem> RedistributorVec<T> {
+impl<'a, T: RedistributorItem> RedistributorSlice<'a, T> {
     pub fn new(ptr: NonNull<u8>) -> Self {
         Self {
-            ptr,
-            _marker: core::marker::PhantomData,
+            ptr: ptr.cast(),
+            _phantom: PhantomData,
         }
     }
 
-    pub fn iter(&self) -> RedistributorIter<T> {
+    pub fn iter(&self) -> RedistributorIter<'a, T> {
         RedistributorIter::new(self.ptr)
     }
 }
 
 pub struct RedistributorIter<'a, T: RedistributorItem> {
-    ptr: NonNull<u8>,
+    ptr: NonNull<T>,
     is_last: bool,
-    _phantom: core::marker::PhantomData<&'a T>,
+    _marker: PhantomData<&'a T>,
 }
 
 impl<'a, T: RedistributorItem> RedistributorIter<'a, T> {
     const STEP: usize = size_of::<T>();
 
-    pub fn new(p: NonNull<u8>) -> Self {
+    pub fn new(p: NonNull<T>) -> Self {
         Self {
             ptr: p,
             is_last: false,
-            _phantom: core::marker::PhantomData,
+            _marker: PhantomData,
         }
     }
 }
@@ -121,11 +187,30 @@ impl<'a, T: RedistributorItem> Iterator for RedistributorIter<'a, T> {
     }
 }
 
-impl<T: RedistributorItem> Index<CPUTarget> for RedistributorVec<T> {
+impl<'a, T: RedistributorItem> Index<CPUTarget> for RedistributorSlice<'a, T> {
     type Output = T;
 
     fn index(&self, index: CPUTarget) -> &Self::Output {
         let affinity = index.affinity();
+        // let step = size_of::<T>();
+
+        // unsafe {
+        //     let mut ptr = self.ptr;
+        //     loop {
+        //         let lpi = ptr.as_ref().lpi_ref();
+        //         let affi = lpi.TYPER.read(TYPER::Affinity) as u32;
+        //         if affi == affinity {
+        //             return ptr.as_ref();
+        //         }
+
+        //         if lpi.TYPER.read(TYPER::Last) > 0 {
+        //             panic!("out of range!");
+        //         }
+
+        //         ptr = ptr.add(step);
+        //     }
+        // }
+
         for rd in self.iter() {
             let affi = rd.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
             if affi == affinity {
@@ -147,7 +232,18 @@ register_structs! {
         (0x0014 => WAKER: ReadWrite<u32, WAKER::Register>),
         (0x0018 => _rsv0),
         (0x0fe8 => PIDR2 : ReadOnly<u32, PIDR2::Register>),
-        (0x0fec => @END),
+        (0x0fec => _rsv1),
+        (0x10000 => @END),
+    }
+}
+
+impl LPI {
+    pub fn wake(&self) {
+        self.WAKER.write(WAKER::ProcessorSleep::CLEAR);
+
+        while self.WAKER.is_set(WAKER::ChildrenAsleep) {
+            spin_loop();
+        }
     }
 }
 
@@ -170,7 +266,7 @@ register_structs! {
         (0x0460 => _rsv5),
         (0x0C00 => pub ICFGR : [ReadWrite<u32>;6]),
         (0x0C18 => _rsv6),
-        (0xFFFC => @END),
+        (0x10000 => @END),
     }
 }
 
@@ -215,11 +311,12 @@ macro_rules! cpu_read {
 }
 
 macro_rules! cpu_write {
-    ($name: expr, $value: expr) => {
+    ($name: expr, $value: expr) => {{
+        let x = $value;
         unsafe {
-            core::arch::asm!(concat!("msr ", $name, ", {}"), in(reg) $value);
+            core::arch::asm!(concat!("msr ", $name, ", {}"), in(reg) x);
         }
-    };
+    }};
 }
 fn enable_group1() {
     unsafe {
@@ -249,7 +346,7 @@ impl GicGeneric for GicV3 {
     }
 
     fn irq_max_size(&self) -> usize {
-        todo!()
+        self.gicd().irq_line_max() as _
     }
 
     fn irq_enable(&mut self, intid: IntId) {
@@ -273,6 +370,15 @@ impl GicGeneric for GicV3 {
     }
 
     fn current_cpu_setup(&self) {
-        todo!()
+        let mut reg = cpu_read!("ICC_SRE_EL1");
+        if (reg & GICC_SRE_SRE) == 0 {
+            reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
+            cpu_write!("ICC_SRE_EL1", reg);
+        }
+
+        cpu_write!("ICC_PMR_EL1", 0xFF);
+        enable_group1();
+        const GICC_CTLR_CBPR: usize = 1 << 0;
+        cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
     }
 }

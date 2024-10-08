@@ -14,7 +14,7 @@ unsafe impl Sync for GicV2 {}
 
 impl GicV2 {
     pub fn new(gicd: NonNull<u8>, gicc: NonNull<u8>) -> GicResult<Self> {
-        let mut s = Self {
+        let s = Self {
             gicd: gicd.cast(),
             gicc: gicc.cast(),
         };

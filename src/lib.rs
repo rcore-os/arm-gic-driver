@@ -3,6 +3,9 @@
 extern crate alloc;
 extern crate core;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) mod define;
 mod version;
 // pub mod gic;
