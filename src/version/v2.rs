@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
+use tock_registers::{register_structs, registers::*};
 
 use super::*;
 

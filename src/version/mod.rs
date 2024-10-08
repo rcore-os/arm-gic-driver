@@ -99,6 +99,7 @@ register_bitfields! [
 
 ];
 
+#[allow(unused)]
 impl Distributor {
     pub fn version(&self) -> u32 {
         let v = self.ICPIDR2.read(PIDR2::ArchRev);
@@ -136,10 +137,10 @@ impl Distributor {
     }
 
     pub fn disable_all_interrupts(&self) {
-        for reg in &self.ICENABLER{
+        for reg in &self.ICENABLER {
             reg.set(u32::MAX);
         }
-        for reg in &self.ICPENDR{
+        for reg in &self.ICPENDR {
             reg.set(u32::MAX);
         }
     }

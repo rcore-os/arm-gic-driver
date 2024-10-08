@@ -1,5 +1,6 @@
-use core::{arch::asm, hint::spin_loop, marker::PhantomData, ops::Index, ptr::NonNull, u32};
+use core::{arch::asm, hint::spin_loop, ops::Index, ptr::NonNull};
 
+use aarch64_cpu::registers::MPIDR_EL1;
 use log::debug;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
@@ -8,7 +9,6 @@ use super::*;
 const GICC_SRE_SRE: usize = 1 << 0;
 const GICC_SRE_DFB: usize = 1 << 1;
 const GICC_SRE_DIB: usize = 1 << 2;
-const GICC_SRE_ENABLE: usize = 1 << 3;
 
 pub struct GicV3 {
     gicd: NonNull<Distributor>,
@@ -30,7 +30,7 @@ impl GicV3 {
         unsafe { self.gicd.as_ref() }
     }
 
-    fn rd_slice<'a>(&'a self) -> RDv3Slice<'a> {
+    fn rd_slice(&self) -> RDv3Slice {
         RDv3Slice::new(self.gicr)
     }
 
@@ -76,7 +76,18 @@ impl GicV3 {
 
     fn init_gicr(&mut self) -> GicResult<()> {
         for rd in self.rd_slice().iter() {
+            let rd = unsafe { rd.as_ref() };
             rd.lpi.wake();
+            rd.sgi.disable_all();
+            rd.sgi.set_group();
+            let affi = rd.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
+            debug!(
+                "Cpu [{}.{}.{}.{}] rd ok",
+                affi & 0xff,
+                (affi >> 8) & 0xff,
+                (affi >> 16) & 0xff,
+                affi >> 24
+            );
         }
         Ok(())
     }
@@ -90,17 +101,33 @@ impl GicV3 {
             spin_loop();
         }
     }
+
+    fn current_rd(&self) -> &RedistributorV3 {
+        let target = CPUTarget {
+            aff0: MPIDR_EL1.read(MPIDR_EL1::Aff0) as _,
+            aff1: MPIDR_EL1.read(MPIDR_EL1::Aff1) as _,
+            aff2: MPIDR_EL1.read(MPIDR_EL1::Aff2) as _,
+            aff3: MPIDR_EL1.read(MPIDR_EL1::Aff3) as _,
+        };
+        for rd in self.rd_slice().iter() {
+            let affi = unsafe { rd.as_ref() }.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
+            if affi == target.affinity() {
+                return unsafe { rd.as_ref() };
+            }
+        }
+        unreachable!()
+    }
 }
 
 unsafe impl Send for GicV3 {}
 unsafe impl Sync for GicV3 {}
 
-pub type RDv3Slice<'a> = RedistributorSlice<'a, RedistributorV3>;
-pub type RDv4Slice<'a> = RedistributorSlice<'a, RedistributorV4>;
+pub type RDv3Slice = RedistributorSlice<RedistributorV3>;
+#[allow(unused)]
+pub type RDv4Slice = RedistributorSlice<RedistributorV4>;
 
 pub trait RedistributorItem {
     fn lpi_ref(&self) -> &LPI;
-    fn sgi_ref(&self) -> &SGI;
 }
 
 pub(crate) struct RedistributorV3 {
@@ -108,6 +135,7 @@ pub(crate) struct RedistributorV3 {
     pub sgi: SGI,
 }
 
+#[allow(unused)]
 pub(crate) struct RedistributorV4 {
     pub lpi: LPI,
     pub sgi: SGI,
@@ -118,103 +146,69 @@ impl RedistributorItem for RedistributorV3 {
     fn lpi_ref(&self) -> &LPI {
         &self.lpi
     }
-
-    fn sgi_ref(&self) -> &SGI {
-        &self.sgi
-    }
 }
 impl RedistributorItem for RedistributorV4 {
     fn lpi_ref(&self) -> &LPI {
         &self.lpi
     }
-    fn sgi_ref(&self) -> &SGI {
-        &self.sgi
-    }
 }
-pub struct RedistributorSlice<'a, T: RedistributorItem> {
+pub struct RedistributorSlice<T: RedistributorItem> {
     ptr: NonNull<T>,
-    _phantom: PhantomData<&'a T>,
 }
 
-impl<'a, T: RedistributorItem> RedistributorSlice<'a, T> {
+impl<T: RedistributorItem> RedistributorSlice<T> {
     pub fn new(ptr: NonNull<u8>) -> Self {
-        Self {
-            ptr: ptr.cast(),
-            _phantom: PhantomData,
-        }
+        Self { ptr: ptr.cast() }
     }
 
-    pub fn iter(&self) -> RedistributorIter<'a, T> {
+    pub fn iter(&self) -> RedistributorIter<T> {
         RedistributorIter::new(self.ptr)
     }
 }
 
-pub struct RedistributorIter<'a, T: RedistributorItem> {
+pub struct RedistributorIter<T: RedistributorItem> {
     ptr: NonNull<T>,
     is_last: bool,
-    _marker: PhantomData<&'a T>,
 }
 
-impl<'a, T: RedistributorItem> RedistributorIter<'a, T> {
-    const STEP: usize = size_of::<T>();
-
+impl<'a, T: RedistributorItem> RedistributorIter<T> {
     pub fn new(p: NonNull<T>) -> Self {
         Self {
             ptr: p,
             is_last: false,
-            _marker: PhantomData,
         }
     }
 }
 
-impl<'a, T: RedistributorItem> Iterator for RedistributorIter<'a, T> {
-    type Item = &'a T;
+impl<T: RedistributorItem> Iterator for RedistributorIter<T> {
+    type Item = NonNull<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.is_last {
             return None;
         }
-
         unsafe {
-            let rd = self.ptr.cast::<T>().as_ref();
+            let ptr = self.ptr;
+            let rd = ptr.as_ref();
             let lpi = rd.lpi_ref();
             if lpi.TYPER.read(TYPER::Last) > 0 {
                 self.is_last = true;
             }
-            self.ptr = self.ptr.offset(Self::STEP as _);
-            Some(rd)
+            self.ptr = self.ptr.add(1);
+            Some(ptr)
         }
     }
 }
 
-impl<'a, T: RedistributorItem> Index<CPUTarget> for RedistributorSlice<'a, T> {
+impl<T: RedistributorItem> Index<CPUTarget> for RedistributorSlice<T> {
     type Output = T;
 
     fn index(&self, index: CPUTarget) -> &Self::Output {
         let affinity = index.affinity();
-        // let step = size_of::<T>();
-
-        // unsafe {
-        //     let mut ptr = self.ptr;
-        //     loop {
-        //         let lpi = ptr.as_ref().lpi_ref();
-        //         let affi = lpi.TYPER.read(TYPER::Affinity) as u32;
-        //         if affi == affinity {
-        //             return ptr.as_ref();
-        //         }
-
-        //         if lpi.TYPER.read(TYPER::Last) > 0 {
-        //             panic!("out of range!");
-        //         }
-
-        //         ptr = ptr.add(step);
-        //     }
-        // }
-
         for rd in self.iter() {
-            let affi = rd.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
+            let affi = unsafe { rd.as_ref() }.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
             if affi == affinity {
-                return rd;
+                return unsafe { rd.as_ref() };
             }
         }
         unreachable!()
@@ -251,9 +245,8 @@ register_structs! {
     #[allow(non_snake_case)]
     pub SGI {
         (0x0000 => _rsv0),
-        // (0x0080 => IGROUPR0: ReadWrite<u32>),
-        // (0x0084 => IGROUPR_E: [ReadWrite<u32>; 2]),
-        (0x0080 => IGROUPR: [ReadWrite<u32>; 3]),
+        (0x0080 => IGROUPR0: ReadWrite<u32>),
+        (0x0084 => IGROUPR_E: [ReadWrite<u32>; 2]),
         (0x008C => _rsv1),
         (0x0100 => ISENABLER0: ReadWrite<u32>),
         (0x0104 => ISENABLER_E: [ReadWrite<u32>;2]),
@@ -264,9 +257,59 @@ register_structs! {
         (0x0400 => IPRIORITYR: [ReadWrite<u8>; 32]),
         (0x0420 => IPRIORITYR_E: [ReadWrite<u8>; 64]),
         (0x0460 => _rsv5),
-        (0x0C00 => pub ICFGR : [ReadWrite<u32>;6]),
+        (0x0C00 => ICFGR : [ReadWrite<u32>; 6]),
         (0x0C18 => _rsv6),
+        (0x0D00 => IGRPMODR0 : ReadWrite<u32>),
+        (0x0D04 => IGRPMODR_E: [ReadWrite<u32>;2]),
+        (0x0D0C => _rsv7),
         (0x10000 => @END),
+    }
+}
+impl SGI {
+    pub fn set_enable_interrupt(&self, irq: IntId, enable: bool) {
+        let int_id: u32 = irq.into();
+        let bit = 1 << (int_id % 32);
+        if enable {
+            self.ISENABLER0.set(bit);
+        } else {
+            self.ICENABLER0.set(bit);
+        }
+    }
+    pub fn set_priority(&self, intid: IntId, priority: u8) {
+        self.IPRIORITYR[u32::from(intid) as usize].set(priority)
+    }
+
+    fn disable_all(&self) {
+        self.ICENABLER0.set(u32::MAX);
+        for reg in &self.ICENABLER_E {
+            reg.set(u32::MAX);
+        }
+    }
+
+    fn set_group(&self) {
+        self.IGROUPR0.set(u32::MAX);
+        self.IGRPMODR0.set(u32::MAX);
+    }
+
+    fn set_cfgr(&self, intid: IntId, trigger: Trigger) {
+        let clean = !((intid.to_u32() % 16) << 1);
+        let bit: u32 = match trigger {
+            Trigger::Edge => 1,
+            Trigger::Level => 0,
+        } << ((intid.to_u32() % 16) << 1);
+
+        if intid.is_sgi() {
+            let mut mask = self.ICFGR[0].get();
+            mask &= clean;
+            mask |= bit;
+
+            self.ICFGR[0].set(mask);
+        } else {
+            let mut mask = self.ICFGR[1].get();
+            mask &= clean;
+            mask |= bit;
+            self.ICFGR[1].set(mask);
+        }
     }
 }
 
@@ -314,7 +357,7 @@ macro_rules! cpu_write {
     ($name: expr, $value: expr) => {{
         let x = $value;
         unsafe {
-            core::arch::asm!(concat!("msr ", $name, ", {}"), in(reg) x);
+            core::arch::asm!(concat!("msr ", $name, ", {0:x}"), in(reg) x);
         }
     }};
 }
@@ -350,23 +393,47 @@ impl GicGeneric for GicV3 {
     }
 
     fn irq_enable(&mut self, intid: IntId) {
-        todo!()
+        if intid.is_private() {
+            self.current_rd().sgi.set_enable_interrupt(intid, true);
+        } else {
+            self.gicd().set_enable_interrupt(intid, true);
+        }
     }
 
     fn irq_disable(&mut self, intid: IntId) {
-        todo!()
+        if intid.is_private() {
+            self.current_rd().sgi.set_enable_interrupt(intid, false);
+        } else {
+            self.gicd().set_enable_interrupt(intid, false);
+        }
     }
 
     fn set_priority(&mut self, intid: IntId, priority: usize) {
-        todo!()
+        if intid.is_private() {
+            self.current_rd().sgi.set_priority(intid, priority as _);
+        } else {
+            self.gicd().set_priority(intid, priority as _);
+        }
     }
 
     fn set_trigger(&mut self, intid: IntId, trigger: Trigger) {
-        todo!()
+        if intid.is_private() {
+            self.current_rd().sgi.set_cfgr(intid, trigger);
+        } else {
+            self.gicd().set_cfgr(intid, trigger);
+        }
     }
 
     fn set_bind_cpu(&mut self, intid: IntId, cpu_list: &[CPUTarget]) {
-        todo!()
+        if intid.is_private() {
+        } else {
+            self.gicd().set_bind_cpu(
+                intid,
+                cpu_list
+                    .iter()
+                    .fold(0, |acc, &cpu| acc | cpu.cpu_target_list()),
+            );
+        }
     }
 
     fn current_cpu_setup(&self) {
