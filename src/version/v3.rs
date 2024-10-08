@@ -426,6 +426,7 @@ impl GicGeneric for GicV3 {
 
     fn set_bind_cpu(&mut self, intid: IntId, cpu_list: &[CPUTarget]) {
         if intid.is_private() {
+            panic!("Private interrupt cannot be bound to CPU");
         } else {
             self.gicd().set_bind_cpu(
                 intid,
