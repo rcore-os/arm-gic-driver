@@ -165,6 +165,7 @@ pub enum Trigger {
 #[derive(Debug, Clone)]
 pub enum GicError {
     Notimplemented,
+    Timeout,
 }
 
 pub type GicResult<T = ()> = core::result::Result<T, GicError>;
@@ -176,7 +177,7 @@ pub trait GicGeneric {
     fn irq_enable(&mut self, intid: IntId);
     fn irq_disable(&mut self, intid: IntId);
     fn set_priority(&mut self, intid: IntId, priority: usize);
-    fn set_triger(&mut self, intid: IntId, triger: Trigger);
+    fn set_trigger(&mut self, intid: IntId, trigger: Trigger);
     fn set_bind_cpu(&mut self, intid: IntId, cpu_list: &[CPUTarget]);
     fn current_cpu_setup(&self);
 }

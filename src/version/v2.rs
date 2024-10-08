@@ -13,7 +13,7 @@ unsafe impl Send for GicV2 {}
 unsafe impl Sync for GicV2 {}
 
 impl GicV2 {
-    pub fn new(gicd: NonNull<u8>, gicc: NonNull<u8>) -> Self {
+    pub fn new(gicd: NonNull<u8>, gicc: NonNull<u8>) -> GicResult<Self> {
         let mut s = Self {
             gicd: gicd.cast(),
             gicc: gicc.cast(),
@@ -22,7 +22,7 @@ impl GicV2 {
             s.gicd.as_ref().disable_all_interrupts();
             s.gicd.as_ref().CTLR.write(CTLR::EnableGrp0::SET);
         }
-        s
+        Ok(s)
     }
 
     fn gicd(&self) -> &Distributor {
@@ -63,7 +63,7 @@ impl GicGeneric for GicV2 {
         self.gicd().set_priority(intid, priority as _);
     }
 
-    fn set_triger(&mut self, intid: super::IntId, triger: Trigger) {
+    fn set_trigger(&mut self, intid: super::IntId, trigger: Trigger) {
         self.gicd().set_cfgr(intid, trigger);
     }
 

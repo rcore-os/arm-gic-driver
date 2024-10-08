@@ -1,22 +1,22 @@
-use core::{arch::asm, ptr::NonNull};
+use core::{arch::asm, ops::Index, ptr::NonNull};
 
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
 use super::*;
 
 pub struct GicV3 {
-    gicd: NonNull<u8>,
+    gicd: NonNull<Distributor>,
     gicr: NonNull<u8>,
 }
 
 impl GicV3 {
-    pub fn new(gicd: NonNull<u8>, gicr: NonNull<u8>) -> Self {
+    pub fn new(gicd: NonNull<u8>, gicr: NonNull<u8>) -> GicResult<Self> {
         let mut s = Self {
             gicd: gicd.cast(),
             gicr: gicr.cast(),
         };
-        
-        s
+
+        Ok(s)
     }
 
     fn gicd(&self) -> &Distributor {
@@ -215,13 +215,11 @@ macro_rules! cpu_read {
 }
 
 macro_rules! cpu_write {
-    ($name: expr, $value: expr) => {{
-        let x: usize;
+    ($name: expr, $value: expr) => {
         unsafe {
-            core::arch::asm!(concat!("msr ", $name, ", {}"), in(reg) value);
+            core::arch::asm!(concat!("msr ", $name, ", {}"), in(reg) $value);
         }
-        x
-    }};
+    };
 }
 fn enable_group1() {
     unsafe {
@@ -236,7 +234,7 @@ fn enable_group1() {
 
 impl GicGeneric for GicV3 {
     fn get_and_acknowledge_interrupt(&self) -> Option<IntId> {
-        let intid = cpu_read!("icc_iar1_el1");
+        let intid = cpu_read!("icc_iar1_el1") as u32;
 
         if intid == SPECIAL_RANGE.start {
             None
@@ -266,7 +264,7 @@ impl GicGeneric for GicV3 {
         todo!()
     }
 
-    fn set_triger(&mut self, intid: IntId, triger: Trigger) {
+    fn set_trigger(&mut self, intid: IntId, trigger: Trigger) {
         todo!()
     }
 

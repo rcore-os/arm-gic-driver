@@ -1,4 +1,5 @@
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
+use v3::IROUTER;
 
 pub mod v2;
 pub mod v3;
