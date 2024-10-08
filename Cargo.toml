@@ -2,6 +2,12 @@
 name = "arm-gic-driver"
 version = "0.2.0"
 edition = "2021"
+license = "MIT"
+description = "A driver for the Arm Generic Interrupt Controller version 1-4."
+authors = ["周睿 <zrufo747@outlook.com>"]
+repository = "https://gitee.com/zr233/arm-gic-driver"
+keywords = ["arm", "aarch64", "driver", "gic", "interrupt-controller"]
+categories = ["embedded", "no-std", "hardware-support"]
 
 [dependencies]
 tock-registers = { version = "0.8" }
