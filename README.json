@@ -1,0 +1,12 @@
+{
+  "name": "arm-gic-driver",
+  "description": "This is a driver of arm gic v2 and v3",
+  "authors": [{
+    "name": "周睿",
+    "email": "zrufo747@outlook.com"
+  }],
+  "keywords": ["gic", "gicv2", "gicv3"],
+  "test_repos": [],
+  "repo": "ZR233/arm-gic-driver",
+  "doc_url": "https://docs.rs/fdt-parser/latest/fdt_parser/"
+}

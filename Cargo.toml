@@ -9,6 +9,9 @@ repository = "https://gitee.com/zr233/arm-gic-driver"
 keywords = ["arm", "aarch64", "driver", "gic", "interrupt-controller"]
 categories = ["embedded", "no-std", "hardware-support"]
 
+[lib]
+doctest = false
+
 [dependencies]
 tock-registers = { version = "0.8" }
 aarch64-cpu = "9.4.0"

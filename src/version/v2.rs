@@ -4,6 +4,7 @@ use tock_registers::{register_structs, registers::*};
 
 use super::*;
 
+/// GICv2 driver. (support GICv1)
 pub struct GicV2 {
     gicd: NonNull<Distributor>,
     gicc: NonNull<CpuInterface>,
@@ -13,6 +14,7 @@ unsafe impl Send for GicV2 {}
 unsafe impl Sync for GicV2 {}
 
 impl GicV2 {
+    /// `gicd`: Distributor register base address. `gicc`: CPU interface register base address.
     pub fn new(gicd: NonNull<u8>, gicc: NonNull<u8>) -> GicResult<Self> {
         let s = Self {
             gicd: gicd.cast(),
