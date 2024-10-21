@@ -1,5 +1,3 @@
-use core::u32;
-
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 use v3::IROUTER;
 

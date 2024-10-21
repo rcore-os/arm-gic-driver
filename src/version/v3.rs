@@ -171,7 +171,7 @@ pub struct RedistributorIter<T: RedistributorItem> {
     is_last: bool,
 }
 
-impl<'a, T: RedistributorItem> RedistributorIter<T> {
+impl<T: RedistributorItem> RedistributorIter<T> {
     pub fn new(p: NonNull<T>) -> Self {
         Self {
             ptr: p,
