@@ -1,10 +1,42 @@
 extern crate std;
-use crate::version::v3::{LPI, SGI};
+use crate::{
+    version::v3::{RedistributorV3, RedistributorV4, LPI, SGI},
+    IntId,
+};
 
 #[test]
-fn test_size() {
+fn size_lpi() {
     let size = size_of::<LPI>();
     assert_eq!(size, 0x10000);
+}
 
+#[test]
+fn size_sgi() {
     assert_eq!(size_of::<SGI>(), 0x10000);
+}
+
+#[test]
+fn test_v3_rd() {
+    let size = size_of::<RedistributorV3>();
+    assert_eq!(size, 0x20000);
+}
+
+#[test]
+fn test_v4_rd() {
+    let size = size_of::<RedistributorV4>();
+    assert_eq!(size, 0x40000);
+}
+
+#[test]
+#[should_panic]
+fn test_sgi() {
+    let id = IntId::sgi(40);
+    assert_eq!(id.is_sgi(), true);
+}
+
+#[test]
+#[should_panic]
+fn test_ppi() {
+    let id = IntId::ppi(17);
+    assert_eq!(id.is_private(), true);
 }
