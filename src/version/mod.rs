@@ -1,3 +1,7 @@
+use core::error::Error;
+
+use alloc::boxed::Box;
+use driver_interface::IrqConfig;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 use v3::IROUTER;
 
@@ -115,6 +119,11 @@ impl Distributor {
         (self.TYPER.read(TYPER::ITLinesNumber) + 1) * 32
     }
 
+    pub fn max_spi_num(&self) -> usize {
+        let max_line = self.irq_line_max() as usize;
+        ((max_line + 1) << 5) - 1
+    }
+
     pub fn set_enable_interrupt(&self, irq: IntId, enable: bool) {
         let int_id: u32 = irq.into();
         let index = (int_id / 32) as usize;
@@ -175,7 +184,7 @@ impl Distributor {
         }
     }
 
-    pub fn set_route(&self, intid: IntId, target: &CPUTarget) {
+    pub fn set_route(&self, intid: IntId, target: CPUTarget) {
         self.IROUTER[u32::from(intid) as usize].write(
             IROUTER::InterruptRoutingMode::Aff
                 + IROUTER::AFF0.val(target.aff0 as _)
@@ -186,17 +195,70 @@ impl Distributor {
     }
 
     fn set_cfgr(&self, intid: IntId, trigger: Trigger) {
-        let index = (u32::from(intid) / 16) as usize;
-        let bit = 1 << (((u32::from(intid) % 16) * 2) + 1);
+        let val = u32::from(intid);
+
+        let index = (val / 16) as usize;
+        let bit = 1 << (((val % 16) * 2) + 1);
 
         let v = self.ICFGR[index].get();
         self.ICFGR[index].set(match trigger {
-            Trigger::Edge => v | bit,
-            Trigger::Level => v & !bit,
+            Trigger::EdgeBoth => v | bit,
+            Trigger::EdgeRising => v | bit,
+            Trigger::EdgeFailling => v | bit,
+            Trigger::LevelHigh => v & !bit,
+            Trigger::LevelLow => v & !bit,
         })
     }
 
     // pub fn cpu_num(&self) -> u32 {
     //     self.TYPER.read(TYPER::CPUNumber) + 1
     // }
+}
+
+// The `bitflags!` macro generates `struct`s that manage a set of flags.
+bitflags::bitflags! {
+    /// Represents a set of flags.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    struct TriggerFlag: usize {
+        const NONE = 0;
+        const EDGE_RISING = 1;
+        const EDGE_FALLING = 2;
+        const EDGE_BOTH = Self::EDGE_RISING.bits()| Self::EDGE_FALLING.bits();
+        const LEVEL_HIGH = 4;
+        const LEVEL_LOW = 8;
+    }
+}
+fn fdt_parse_irq_config(itr: &[u32]) -> Result<IrqConfig, Box<dyn Error>> {
+    const SPI: u32 = 0;
+    const PPI: u32 = 1;
+
+    let num = itr[1];
+
+    let irq_id: u32 = match itr[0] {
+        SPI => IntId::spi(num),
+        PPI => IntId::ppi(num),
+        _ => panic!("Invalid irq type {}", itr[0]),
+    }
+    .into();
+
+    let flag = TriggerFlag::from_bits_truncate(itr[2] as _);
+
+    let trigger = if flag.contains(TriggerFlag::EDGE_BOTH) {
+        Trigger::EdgeBoth
+    } else if flag.contains(TriggerFlag::EDGE_RISING) {
+        Trigger::EdgeRising
+    } else if flag.contains(TriggerFlag::EDGE_FALLING) {
+        Trigger::EdgeFailling
+    } else if flag.contains(TriggerFlag::LEVEL_HIGH) {
+        Trigger::LevelHigh
+    } else if flag.contains(TriggerFlag::LEVEL_LOW) {
+        Trigger::LevelLow
+    } else {
+        panic!("Invalid irq type {}", itr[2])
+    };
+
+    Ok(IrqConfig {
+        irq: (irq_id as usize).into(),
+        trigger,
+    })
 }

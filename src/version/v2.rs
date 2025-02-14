@@ -1,30 +1,25 @@
 use core::ptr::NonNull;
 
+use driver_interface::{DriverGeneric, intc};
 use tock_registers::{register_structs, registers::*};
 
 use super::*;
 
 /// GICv2 driver. (support GICv1)
-pub struct GicV2 {
+pub struct Gic {
     gicd: NonNull<Distributor>,
     gicc: NonNull<CpuInterface>,
 }
 
-unsafe impl Send for GicV2 {}
-unsafe impl Sync for GicV2 {}
+unsafe impl Send for Gic {}
 
-impl GicV2 {
+impl Gic {
     /// `gicd`: Distributor register base address. `gicc`: CPU interface register base address.
-    pub fn new(gicd: NonNull<u8>, gicc: NonNull<u8>) -> GicResult<Self> {
-        let s = Self {
+    pub fn new(gicd: NonNull<u8>, gicc: NonNull<u8>) -> Self {
+        Self {
             gicd: gicd.cast(),
             gicc: gicc.cast(),
-        };
-        unsafe {
-            s.gicd.as_ref().disable_all_interrupts();
-            s.gicd.as_ref().CTLR.write(CTLR::EnableGrp0::SET);
         }
-        Ok(s)
     }
 
     fn gicd(&self) -> &Distributor {
@@ -35,47 +30,73 @@ impl GicV2 {
     }
 }
 
-impl GicGeneric for GicV2 {
-    fn get_and_acknowledge_interrupt(&self) -> Option<super::IntId> {
-        self.gicc().get_and_acknowledge_interrupt()
+impl DriverGeneric for Gic {
+    fn open(&mut self) -> driver_interface::DriverResult {
+        self.gicd().disable_all_interrupts();
+        self.gicd().CTLR.write(CTLR::EnableGrp0::SET);
+        Ok(())
     }
 
-    fn end_interrupt(&self, intid: super::IntId) {
-        self.gicc().end_interrupt(intid)
+    fn close(&mut self) -> driver_interface::DriverResult {
+        Ok(())
     }
+}
 
-    fn irq_max_size(&self) -> usize {
-        self.gicd().irq_line_max() as _
-    }
-
-    fn irq_disable(&mut self, intid: super::IntId) {
-        self.gicd().set_enable_interrupt(intid, false);
-    }
-
-    fn current_cpu_setup(&self) {
+impl intc::Interface for Gic {
+    fn current_cpu_setup(&self) -> intc::HardwareCPU {
         self.gicc().enable();
         self.gicc().set_priority_mask(0xff);
+        Box::new(GicCpu { ptr: self.gicc })
     }
 
-    fn irq_enable(&mut self, intid: super::IntId) {
-        self.gicd().set_enable_interrupt(intid, true);
+    fn irq_enable(&mut self, irq: intc::IrqId) {
+        self.gicd().set_enable_interrupt(irq.into(), true);
     }
 
-    fn set_priority(&mut self, intid: super::IntId, priority: usize) {
-        self.gicd().set_priority(intid, priority as _);
+    fn irq_disable(&mut self, irq: intc::IrqId) {
+        self.gicd().set_enable_interrupt(irq.into(), false);
     }
 
-    fn set_trigger(&mut self, intid: super::IntId, trigger: Trigger) {
-        self.gicd().set_cfgr(intid, trigger);
+    fn set_priority(&mut self, irq: intc::IrqId, priority: usize) {
+        self.gicd().set_priority(irq.into(), priority as _);
     }
 
-    fn set_bind_cpu(&mut self, intid: super::IntId, target_list: &[super::CPUTarget]) {
-        self.gicd().set_bind_cpu(
-            intid,
-            target_list
-                .iter()
-                .fold(0, |acc, &cpu| acc | cpu.cpu_target_list()),
-        );
+    fn set_trigger(&mut self, irq: intc::IrqId, trigger: Trigger) {
+        self.gicd().set_cfgr(irq.into(), trigger);
+    }
+
+    fn set_target_cpu(&mut self, irq: intc::IrqId, cpu: intc::CpuId) {
+        let target_list = 1u8 << usize::from(cpu);
+        self.gicd().set_bind_cpu(irq.into(), target_list);
+    }
+}
+
+pub struct GicCpu {
+    ptr: NonNull<CpuInterface>,
+}
+
+unsafe impl Sync for GicCpu {}
+unsafe impl Send for GicCpu {}
+
+impl GicCpu {
+    fn gicc(&self) -> &CpuInterface {
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+impl intc::InterfaceCPU for GicCpu {
+    fn get_and_acknowledge_interrupt(&mut self) -> Option<intc::IrqId> {
+        self.gicc()
+            .get_and_acknowledge_interrupt()
+            .map(|i| (u32::from(i) as usize).into())
+    }
+
+    fn end_interrupt(&mut self, irq: intc::IrqId) {
+        self.gicc().end_interrupt(IntId::from(irq))
+    }
+
+    fn parse_fdt_config(&self, prop_interrupts: &[u32]) -> Result<IrqConfig, Box<dyn Error>> {
+        super::fdt_parse_irq_config(prop_interrupts)
     }
 }
 

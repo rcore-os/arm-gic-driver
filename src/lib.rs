@@ -9,5 +9,5 @@ pub(crate) mod define;
 mod tests;
 mod version;
 
-pub use define::{CPUTarget, GicGeneric, IntId, SGITarget, Trigger, MPID};
-pub use version::{v2::GicV2, v3::GicV3};
+pub use define::{IntId, Trigger};
+pub use version::*;

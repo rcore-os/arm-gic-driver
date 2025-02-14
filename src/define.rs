@@ -3,6 +3,9 @@ use core::{
     ops::Range,
 };
 
+use driver_interface::intc::IrqId;
+pub use driver_interface::intc::Trigger;
+
 #[derive(Clone, Copy)]
 pub enum SGITarget<'a> {
     AllOther,
@@ -37,9 +40,9 @@ impl CPUTarget {
 
     pub(crate) fn affinity(&self) -> u32 {
         self.aff0 as u32
-            | (self.aff1 as u32) << 8
-            | (self.aff2 as u32) << 16
-            | (self.aff3 as u32) << 24
+            | ((self.aff1 as u32) << 8)
+            | ((self.aff2 as u32) << 16)
+            | ((self.aff3 as u32) << 24)
     }
 
     pub(crate) fn cpu_target_list(&self) -> u8 {
@@ -150,38 +153,14 @@ impl Debug for IntId {
         }
     }
 }
-
+impl From<IrqId> for IntId {
+    fn from(id: IrqId) -> Self {
+        let id: usize = id.into();
+        Self(id as _)
+    }
+}
 impl From<IntId> for u32 {
     fn from(intid: IntId) -> Self {
         intid.0
     }
-}
-
-/// The trigger configuration for an interrupt.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Trigger {
-    /// The interrupt is edge triggered.
-    Edge,
-    /// The interrupt is level triggered.
-    Level,
-}
-
-#[derive(Debug, Clone)]
-pub enum GicError {
-    Notimplemented,
-    Timeout,
-}
-
-pub type GicResult<T = ()> = core::result::Result<T, GicError>;
-
-pub trait GicGeneric {
-    fn get_and_acknowledge_interrupt(&self) -> Option<IntId>;
-    fn end_interrupt(&self, intid: IntId);
-    fn irq_max_size(&self) -> usize;
-    fn irq_enable(&mut self, intid: IntId);
-    fn irq_disable(&mut self, intid: IntId);
-    fn set_priority(&mut self, intid: IntId, priority: usize);
-    fn set_trigger(&mut self, intid: IntId, trigger: Trigger);
-    fn set_bind_cpu(&mut self, intid: IntId, cpu_list: &[CPUTarget]);
-    fn current_cpu_setup(&self);
 }

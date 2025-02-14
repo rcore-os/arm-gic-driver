@@ -1,7 +1,12 @@
-use core::{arch::asm, hint::spin_loop, ops::Index, ptr::NonNull};
+use core::{arch::asm, error::Error, hint::spin_loop, ops::Index, ptr::NonNull};
 
+use super::IntId;
 use aarch64_cpu::registers::MPIDR_EL1;
-use log::debug;
+use alloc::boxed::Box;
+use driver_interface::{
+    DriverGeneric,
+    intc::{self, *},
+};
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
 use super::*;
@@ -10,121 +15,255 @@ const GICC_SRE_SRE: usize = 1 << 0;
 const GICC_SRE_DFB: usize = 1 << 1;
 const GICC_SRE_DIB: usize = 1 << 2;
 
-pub struct GicV3 {
-    gicd: NonNull<Distributor>,
-    gicr: NonNull<u8>,
+#[derive(Debug, Clone, Copy)]
+pub enum Security {
+    Two,
+    OneNS,
 }
 
-impl GicV3 {
-    pub fn new(gicd: NonNull<u8>, gicr: NonNull<u8>) -> GicResult<Self> {
-        let mut s = Self {
+impl Default for Security {
+    fn default() -> Self {
+        Self::Two
+    }
+}
+
+pub struct Gic {
+    gicd: NonNull<Distributor>,
+    gicr: NonNull<u8>,
+    security: Security,
+    max_spi_num: usize,
+}
+
+impl Gic {
+    pub fn new(gicd: NonNull<u8>, gicr: NonNull<u8>, security: Security) -> Self {
+        Self {
             gicd: gicd.cast(),
             gicr,
-        };
-        s.init_gicd()?;
-        s.init_gicr()?;
-        Ok(s)
+            security,
+            max_spi_num: 0,
+        }
     }
 
-    fn gicd(&self) -> &Distributor {
+    fn reg(&self) -> &Distributor {
         unsafe { self.gicd.as_ref() }
     }
 
-    fn rd_slice(&self) -> RDv3Slice {
-        RDv3Slice::new(self.gicr)
-    }
-
-    fn init_gicd(&mut self) -> GicResult<()> {
-        // Disable the distributor.
-        self.gicd().CTLR.set(0);
-        self.wait_ctlr();
-
-        debug!("disable all interrupts, and default to group 1");
-
-        for reg in self.gicd().ICENABLER.iter() {
-            reg.set(u32::MAX);
-        }
-
-        for reg in self.gicd().ICPENDR.iter() {
-            reg.set(u32::MAX);
-        }
-
-        for reg in self.gicd().IGROUPR.iter() {
-            reg.set(u32::MAX);
-        }
-
-        if !self.is_one_ns_security() {
-            for reg in self.gicd().IGRPMODR.iter() {
-                reg.set(u32::MAX);
-            }
-        }
-
-        self.wait_ctlr();
-
-        if self.is_one_ns_security() {
-            self.gicd()
-                .CTLR
-                .write(CTLR::ARE_S.val(1) + CTLR::EnableGrp1NS.val(1));
-        } else {
-            self.gicd()
-                .CTLR
-                .write(CTLR::ARE_NS.val(1) + CTLR::EnableGrp1NS.val(1));
-        }
-
-        Ok(())
-    }
-
-    fn init_gicr(&mut self) -> GicResult<()> {
-        for rd in self.rd_slice().iter() {
-            let rd = unsafe { rd.as_ref() };
-            rd.lpi.wake();
-            rd.sgi.disable_all();
-            rd.sgi.set_group();
-            let affi = rd.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
-            debug!(
-                "Cpu [{}.{}.{}.{}] rd ok",
-                affi & 0xff,
-                (affi >> 8) & 0xff,
-                (affi >> 16) & 0xff,
-                affi >> 24
-            );
-        }
-        Ok(())
-    }
-
-    fn is_one_ns_security(&self) -> bool {
-        self.gicd().CTLR.read(CTLR::DS) > 0
+    fn reg_mut(&mut self) -> &mut Distributor {
+        unsafe { self.gicd.as_mut() }
     }
 
     fn wait_ctlr(&self) {
-        while self.gicd().CTLR.is_set(CTLR::RWP) {
+        while self.reg().CTLR.is_set(CTLR::RWP) {
             spin_loop();
         }
     }
+    fn rd_slice(&self) -> RDv3Slice {
+        RDv3Slice::new(self.gicr)
+    }
+    fn current_rd(&self) -> NonNull<RedistributorV3> {
+        let want = (MPIDR_EL1.get() & 0xFFF) as u32;
 
-    fn current_rd(&self) -> &RedistributorV3 {
-        let target = CPUTarget {
-            aff0: MPIDR_EL1.read(MPIDR_EL1::Aff0) as _,
-            aff1: MPIDR_EL1.read(MPIDR_EL1::Aff1) as _,
-            aff2: MPIDR_EL1.read(MPIDR_EL1::Aff2) as _,
-            aff3: MPIDR_EL1.read(MPIDR_EL1::Aff3) as _,
-        };
         for rd in self.rd_slice().iter() {
             let affi = unsafe { rd.as_ref() }.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
-            if affi == target.affinity() {
-                return unsafe { rd.as_ref() };
+            if affi == want {
+                return rd;
             }
         }
-        unreachable!()
+        panic!("No current redistributor")
+    }
+
+    fn rd_mut(&mut self) -> &mut RedistributorV3 {
+        unsafe { self.current_rd().as_mut() }
     }
 }
 
-unsafe impl Send for GicV3 {}
-unsafe impl Sync for GicV3 {}
+unsafe impl Send for Gic {}
 
-pub type RDv3Slice = RedistributorSlice<RedistributorV3>;
+impl DriverGeneric for Gic {
+    fn open(&mut self) -> driver_interface::DriverResult {
+        // Disable the distributor
+        self.reg_mut().CTLR.set(0);
+        self.wait_ctlr();
+
+        self.max_spi_num = self.reg().max_spi_num();
+
+        if matches!(self.security, Security::OneNS) {
+            self.reg_mut().CTLR.modify(CTLR::DS::SET);
+        }
+
+        // 关闭所有中断，并将中断分组默认为group 1
+        for reg in self.reg_mut().ICENABLER.iter_mut() {
+            reg.set(u32::MAX);
+        }
+
+        for reg in self.reg_mut().ICPENDR.iter_mut() {
+            reg.set(u32::MAX);
+        }
+
+        for reg in self.reg_mut().IGROUPR.iter_mut() {
+            reg.set(u32::MAX);
+        }
+
+        for reg in self.reg_mut().IGRPMODR.iter() {
+            reg.set(u32::MAX);
+        }
+
+        self.wait_ctlr();
+
+        for reg in self.reg_mut().IPRIORITYR.iter_mut() {
+            reg.set(0xa0);
+        }
+
+        for reg in self.reg_mut().ICFGR.iter_mut() {
+            reg.set(0x0);
+        }
+
+        match self.security {
+            Security::Two => self
+                .reg_mut()
+                .CTLR
+                .write(CTLR::ARE_NS::SET + CTLR::EnableGrp1NS::SET),
+            Security::OneNS => self
+                .reg_mut()
+                .CTLR
+                .write(CTLR::ARE_S::SET + CTLR::EnableGrp1S::SET),
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> driver_interface::DriverResult {
+        Ok(())
+    }
+}
+
+macro_rules! cpu_read {
+    ($name: expr) => {{
+        let x: usize;
+        unsafe {
+            core::arch::asm!(concat!("mrs {}, ", $name), out(reg) x);
+        }
+        x
+    }};
+}
+
+macro_rules! cpu_write {
+    ($name: expr, $value: expr) => {{
+        let x = $value;
+        unsafe {
+            core::arch::asm!(concat!("msr ", $name, ", {0:x}"), in(reg) x);
+        }
+    }};
+}
+impl Interface for Gic {
+    fn current_cpu_setup(&self) -> HardwareCPU {
+        let rd = self.current_rd();
+        Box::new(GicCpu::new(rd))
+    }
+
+    fn irq_enable(&mut self, irq: IrqId) {
+        let id = IntId::from(irq);
+        if id.is_private() {
+            self.rd_mut().sgi.set_enable_interrupt(id, true);
+        } else {
+            self.reg_mut().set_enable_interrupt(id, true);
+        }
+    }
+
+    fn irq_disable(&mut self, irq: IrqId) {
+        let intid = IntId::from(irq);
+        if intid.is_private() {
+            self.rd_mut().sgi.set_enable_interrupt(intid, false);
+        } else {
+            self.reg_mut().set_enable_interrupt(intid, false);
+        }
+    }
+
+    fn set_priority(&mut self, irq: IrqId, priority: usize) {
+        let intid = IntId::from(irq);
+        if intid.is_private() {
+            self.rd_mut().sgi.set_priority(intid, priority as _);
+        } else {
+            self.reg_mut().set_priority(intid, priority as _);
+        }
+    }
+
+    fn set_trigger(&mut self, irq: IrqId, trigger: Trigger) {
+        let intid = IntId::from(irq);
+        if intid.is_private() {
+            self.rd_mut().sgi.set_cfgr(intid, trigger);
+        } else {
+            self.reg_mut().set_cfgr(intid, trigger);
+        }
+    }
+
+    fn set_target_cpu(&mut self, irq: IrqId, cpu: CpuId) {
+        let intid = IntId::from(irq);
+        if intid.is_private() {
+            return;
+            // panic!("set_target_cpu is not supported for private interrupts");
+        }
+
+        let mpid: usize = cpu.into();
+        let target = CPUTarget::from(MPID::from(mpid as u64));
+        self.reg_mut().set_route(intid, target);
+    }
+}
+
+pub struct GicCpu {}
+
+unsafe impl Send for GicCpu {}
+unsafe impl Sync for GicCpu {}
+
+impl GicCpu {
+    fn new(mut rd: NonNull<RedistributorV3>) -> Self {
+        let rd = unsafe { rd.as_mut() };
+
+        rd.lpi.wake();
+        rd.sgi.ICENABLER0.set(u32::MAX);
+        rd.sgi.ICPENDR0.set(u32::MAX);
+        rd.sgi.IGROUPR0.set(u32::MAX);
+        rd.sgi.IGRPMODR0.set(u32::MAX);
+
+        let mut reg = cpu_read!("ICC_SRE_EL1");
+        if (reg & GICC_SRE_SRE) == 0 {
+            reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
+            cpu_write!("ICC_SRE_EL1", reg);
+        }
+
+        cpu_write!("ICC_PMR_EL1", 0xFF);
+        enable_group1();
+        const GICC_CTLR_CBPR: usize = 1 << 0;
+        cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
+
+        Self {}
+    }
+}
+
+impl InterfaceCPU for GicCpu {
+    fn get_and_acknowledge_interrupt(&mut self) -> Option<intc::IrqId> {
+        let intid = cpu_read!("icc_iar1_el1");
+
+        if intid == SPECIAL_RANGE.start as usize {
+            None
+        } else {
+            Some(intid.into())
+        }
+    }
+
+    fn end_interrupt(&mut self, irq: intc::IrqId) {
+        let intid: usize = irq.into();
+        cpu_write!("icc_eoir1_el1", intid);
+    }
+
+    fn parse_fdt_config(&self, prop_interrupts: &[u32]) -> Result<IrqConfig, Box<dyn Error>> {
+        super::fdt_parse_irq_config(prop_interrupts)
+    }
+}
+
 #[allow(unused)]
-pub type RDv4Slice = RedistributorSlice<RedistributorV4>;
+type RDv3Slice = RedistributorSlice<RedistributorV3>;
+#[allow(unused)]
+type RDv4Slice = RedistributorSlice<RedistributorV4>;
 
 pub trait RedistributorItem {
     fn lpi_ref(&self) -> &LPI;
@@ -219,7 +358,7 @@ register_structs! {
     /// GIC CPU Interface registers.
     #[allow(non_snake_case)]
     pub LPI {
-        (0x0000 => CTLR: ReadWrite<u32>),
+        (0x0000 => CTLR: ReadWrite<u32, RCtrl::Register>),
         (0x0004 => IIDR: ReadOnly<u32>),
         (0x0008 => TYPER: ReadOnly<u64, TYPER::Register>),
         (0x0010 => STATUSR: ReadWrite<u32>),
@@ -230,12 +369,29 @@ register_structs! {
         (0x10000 => @END),
     }
 }
+register_bitfields! [
+    u32,
+    RCtrl [
+        EnableLPIs OFFSET(0) NUMBITS(1) [],
+        CES OFFSET(1) NUMBITS(1) [],
+        IR  OFFSET(2) NUMBITS(1) [],
+        RWP OFFSET(3) NUMBITS(1) [],
+        DPG OFFSET(24) NUMBITS(1) [],
+        DPG1NS OFFSET(25) NUMBITS(1) [],
+        DPG1S OFFSET(26) NUMBITS(1) [],
+        UWP OFFSET(31) NUMBITS(1) [],
+    ],
+];
 
 impl LPI {
     pub fn wake(&self) {
         self.WAKER.write(WAKER::ProcessorSleep::CLEAR);
 
         while self.WAKER.is_set(WAKER::ChildrenAsleep) {
+            spin_loop();
+        }
+
+        while self.CTLR.is_set(RCtrl::RWP) {
             spin_loop();
         }
     }
@@ -254,14 +410,20 @@ register_structs! {
         (0x0180 => ICENABLER0 : ReadWrite<u32>),
         (0x0184 => ICENABLER_E: [ReadWrite<u32>;2]),
         (0x018C => _rsv3),
+        (0x0200 => ISPENDR0: ReadWrite<u32>),
+        (0x0204 => ISPENDR_E: [ReadWrite<u32>; 2]),
+        (0x020C => _rsv4),
+        (0x0280 => ICPENDR0: ReadWrite<u32>),
+        (0x0284 => ICPENDR_E: [ReadWrite<u32>; 2]),
+        (0x028C => _rsv5),
         (0x0400 => IPRIORITYR: [ReadWrite<u8>; 32]),
         (0x0420 => IPRIORITYR_E: [ReadWrite<u8>; 64]),
-        (0x0460 => _rsv5),
+        (0x0460 => _rsv6),
         (0x0C00 => ICFGR : [ReadWrite<u32>; 6]),
-        (0x0C18 => _rsv6),
+        (0x0C18 => _rsv7),
         (0x0D00 => IGRPMODR0 : ReadWrite<u32>),
         (0x0D04 => IGRPMODR_E: [ReadWrite<u32>;2]),
-        (0x0D0C => _rsv7),
+        (0x0D0C => _rsv8),
         (0x10000 => @END),
     }
 }
@@ -279,23 +441,14 @@ impl SGI {
         self.IPRIORITYR[u32::from(intid) as usize].set(priority)
     }
 
-    fn disable_all(&self) {
-        self.ICENABLER0.set(u32::MAX);
-        for reg in &self.ICENABLER_E {
-            reg.set(u32::MAX);
-        }
-    }
-
-    fn set_group(&self) {
-        self.IGROUPR0.set(u32::MAX);
-        self.IGRPMODR0.set(u32::MAX);
-    }
-
     fn set_cfgr(&self, intid: IntId, trigger: Trigger) {
         let clean = !((intid.to_u32() % 16) << 1);
         let bit: u32 = match trigger {
-            Trigger::Edge => 1,
-            Trigger::Level => 0,
+            Trigger::EdgeBoth => 1,
+            Trigger::EdgeRising => 1,
+            Trigger::EdgeFailling => 1,
+            Trigger::LevelHigh => 0,
+            Trigger::LevelLow => 0,
         } << ((intid.to_u32() % 16) << 1);
 
         if intid.is_sgi() {
@@ -343,24 +496,6 @@ register_bitfields! [
     ],
 ];
 
-macro_rules! cpu_read {
-    ($name: expr) => {{
-        let x: usize;
-        unsafe {
-            core::arch::asm!(concat!("mrs {}, ", $name), out(reg) x);
-        }
-        x
-    }};
-}
-
-macro_rules! cpu_write {
-    ($name: expr, $value: expr) => {{
-        let x = $value;
-        unsafe {
-            core::arch::asm!(concat!("msr ", $name, ", {0:x}"), in(reg) x);
-        }
-    }};
-}
 fn enable_group1() {
     unsafe {
         asm!(
@@ -369,84 +504,5 @@ fn enable_group1() {
     MSR   ICC_IGRPEN1_EL1, x0
     ISB"
         )
-    }
-}
-
-impl GicGeneric for GicV3 {
-    fn get_and_acknowledge_interrupt(&self) -> Option<IntId> {
-        let intid = cpu_read!("icc_iar1_el1") as u32;
-
-        if intid == SPECIAL_RANGE.start {
-            None
-        } else {
-            Some(unsafe { IntId::raw(intid) })
-        }
-    }
-
-    fn end_interrupt(&self, intid: IntId) {
-        let intid = u32::from(intid) as usize;
-        cpu_write!("icc_eoir1_el1", intid);
-    }
-
-    fn irq_max_size(&self) -> usize {
-        self.gicd().irq_line_max() as _
-    }
-
-    fn irq_enable(&mut self, intid: IntId) {
-        if intid.is_private() {
-            self.current_rd().sgi.set_enable_interrupt(intid, true);
-        } else {
-            self.gicd().set_enable_interrupt(intid, true);
-        }
-    }
-
-    fn irq_disable(&mut self, intid: IntId) {
-        if intid.is_private() {
-            self.current_rd().sgi.set_enable_interrupt(intid, false);
-        } else {
-            self.gicd().set_enable_interrupt(intid, false);
-        }
-    }
-
-    fn set_priority(&mut self, intid: IntId, priority: usize) {
-        if intid.is_private() {
-            self.current_rd().sgi.set_priority(intid, priority as _);
-        } else {
-            self.gicd().set_priority(intid, priority as _);
-        }
-    }
-
-    fn set_trigger(&mut self, intid: IntId, trigger: Trigger) {
-        if intid.is_private() {
-            self.current_rd().sgi.set_cfgr(intid, trigger);
-        } else {
-            self.gicd().set_cfgr(intid, trigger);
-        }
-    }
-
-    fn set_bind_cpu(&mut self, intid: IntId, cpu_list: &[CPUTarget]) {
-        if intid.is_private() {
-            panic!("Private interrupt cannot be bound to CPU");
-        } else {
-            self.gicd().set_bind_cpu(
-                intid,
-                cpu_list
-                    .iter()
-                    .fold(0, |acc, &cpu| acc | cpu.cpu_target_list()),
-            );
-        }
-    }
-
-    fn current_cpu_setup(&self) {
-        let mut reg = cpu_read!("ICC_SRE_EL1");
-        if (reg & GICC_SRE_SRE) == 0 {
-            reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
-            cpu_write!("ICC_SRE_EL1", reg);
-        }
-
-        cpu_write!("ICC_PMR_EL1", 0xFF);
-        enable_group1();
-        const GICC_CTLR_CBPR: usize = 1 << 0;
-        cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
     }
 }
