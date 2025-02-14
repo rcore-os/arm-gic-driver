@@ -240,7 +240,7 @@ impl GicCpu {
 }
 
 impl InterfaceCPU for GicCpu {
-    fn get_and_acknowledge_interrupt(&mut self) -> Option<intc::IrqId> {
+    fn get_and_acknowledge_interrupt(&self) -> Option<intc::IrqId> {
         let intid = cpu_read!("icc_iar1_el1");
 
         if intid == SPECIAL_RANGE.start as usize {
@@ -250,7 +250,7 @@ impl InterfaceCPU for GicCpu {
         }
     }
 
-    fn end_interrupt(&mut self, irq: intc::IrqId) {
+    fn end_interrupt(&self, irq: intc::IrqId) {
         let intid: usize = irq.into();
         cpu_write!("icc_eoir1_el1", intid);
     }

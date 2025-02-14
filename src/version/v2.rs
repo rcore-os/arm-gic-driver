@@ -85,13 +85,13 @@ impl GicCpu {
 }
 
 impl intc::InterfaceCPU for GicCpu {
-    fn get_and_acknowledge_interrupt(&mut self) -> Option<intc::IrqId> {
+    fn get_and_acknowledge_interrupt(&self) -> Option<intc::IrqId> {
         self.gicc()
             .get_and_acknowledge_interrupt()
             .map(|i| (u32::from(i) as usize).into())
     }
 
-    fn end_interrupt(&mut self, irq: intc::IrqId) {
+    fn end_interrupt(&self, irq: intc::IrqId) {
         self.gicc().end_interrupt(IntId::from(irq))
     }
 
