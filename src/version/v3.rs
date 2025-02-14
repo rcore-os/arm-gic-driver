@@ -254,10 +254,6 @@ impl InterfaceCPU for GicCpu {
         let intid: usize = irq.into();
         cpu_write!("icc_eoir1_el1", intid);
     }
-
-    fn parse_fdt_config(&self, prop_interrupts: &[u32]) -> Result<IrqConfig, Box<dyn Error>> {
-        super::fdt_parse_irq_config(prop_interrupts)
-    }
 }
 
 #[allow(unused)]

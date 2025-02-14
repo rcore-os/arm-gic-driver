@@ -1,7 +1,7 @@
 use core::error::Error;
 
 use alloc::boxed::Box;
-use driver_interface::IrqConfig;
+pub use driver_interface::IrqConfig;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 use v3::IROUTER;
 
@@ -228,7 +228,7 @@ bitflags::bitflags! {
         const LEVEL_LOW = 8;
     }
 }
-fn fdt_parse_irq_config(itr: &[u32]) -> Result<IrqConfig, Box<dyn Error>> {
+pub fn fdt_parse_irq_config(itr: &[u32]) -> Result<IrqConfig, Box<dyn Error>> {
     const SPI: u32 = 0;
     const PPI: u32 = 1;
 

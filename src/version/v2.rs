@@ -94,10 +94,6 @@ impl intc::InterfaceCPU for GicCpu {
     fn end_interrupt(&self, irq: intc::IrqId) {
         self.gicc().end_interrupt(IntId::from(irq))
     }
-
-    fn parse_fdt_config(&self, prop_interrupts: &[u32]) -> Result<IrqConfig, Box<dyn Error>> {
-        super::fdt_parse_irq_config(prop_interrupts)
-    }
 }
 
 register_structs! {
