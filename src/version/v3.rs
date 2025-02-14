@@ -1,4 +1,4 @@
-use core::{arch::asm, error::Error, hint::spin_loop, ops::Index, ptr::NonNull};
+use core::{arch::asm, hint::spin_loop, ops::Index, ptr::NonNull};
 
 use super::IntId;
 use aarch64_cpu::registers::MPIDR_EL1;
