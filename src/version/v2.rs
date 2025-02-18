@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use driver_interface::{DriverGeneric, intc};
+use rdif_intc::*;
 use tock_registers::{register_structs, registers::*};
 
 use super::*;
@@ -31,41 +31,41 @@ impl Gic {
 }
 
 impl DriverGeneric for Gic {
-    fn open(&mut self) -> driver_interface::DriverResult {
+    fn open(&mut self) -> DriverResult {
         self.gicd().disable_all_interrupts();
         self.gicd().CTLR.write(CTLR::EnableGrp0::SET);
         Ok(())
     }
 
-    fn close(&mut self) -> driver_interface::DriverResult {
+    fn close(&mut self) -> DriverResult {
         Ok(())
     }
 }
 
-impl intc::Interface for Gic {
-    fn current_cpu_setup(&self) -> intc::HardwareCPU {
+impl Interface for Gic {
+    fn current_cpu_setup(&self) -> HardwareCPU {
         self.gicc().enable();
         self.gicc().set_priority_mask(0xff);
         Box::new(GicCpu { ptr: self.gicc })
     }
 
-    fn irq_enable(&mut self, irq: intc::IrqId) {
+    fn irq_enable(&mut self, irq: IrqId) {
         self.gicd().set_enable_interrupt(irq.into(), true);
     }
 
-    fn irq_disable(&mut self, irq: intc::IrqId) {
+    fn irq_disable(&mut self, irq: IrqId) {
         self.gicd().set_enable_interrupt(irq.into(), false);
     }
 
-    fn set_priority(&mut self, irq: intc::IrqId, priority: usize) {
+    fn set_priority(&mut self, irq: IrqId, priority: usize) {
         self.gicd().set_priority(irq.into(), priority as _);
     }
 
-    fn set_trigger(&mut self, irq: intc::IrqId, trigger: Trigger) {
+    fn set_trigger(&mut self, irq: IrqId, trigger: Trigger) {
         self.gicd().set_cfgr(irq.into(), trigger);
     }
 
-    fn set_target_cpu(&mut self, irq: intc::IrqId, cpu: intc::CpuId) {
+    fn set_target_cpu(&mut self, irq: IrqId, cpu: CpuId) {
         let target_list = 1u8 << usize::from(cpu);
         self.gicd().set_bind_cpu(irq.into(), target_list);
     }
@@ -84,14 +84,14 @@ impl GicCpu {
     }
 }
 
-impl intc::InterfaceCPU for GicCpu {
-    fn get_and_acknowledge_interrupt(&self) -> Option<intc::IrqId> {
+impl InterfaceCPU for GicCpu {
+    fn get_and_acknowledge_interrupt(&self) -> Option<IrqId> {
         self.gicc()
             .get_and_acknowledge_interrupt()
             .map(|i| (u32::from(i) as usize).into())
     }
 
-    fn end_interrupt(&self, irq: intc::IrqId) {
+    fn end_interrupt(&self, irq: IrqId) {
         self.gicc().end_interrupt(IntId::from(irq))
     }
 }

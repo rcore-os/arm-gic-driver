@@ -3,8 +3,7 @@ use core::{
     ops::Range,
 };
 
-use driver_interface::intc::IrqId;
-pub use driver_interface::intc::Trigger;
+use rdif_intc::IrqId;
 
 #[derive(Clone, Copy)]
 pub enum SGITarget<'a> {

@@ -1,7 +1,7 @@
 use core::error::Error;
 
 use alloc::boxed::Box;
-pub use driver_interface::IrqConfig;
+use rdif_intc::*;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 use v3::IROUTER;
 

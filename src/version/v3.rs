@@ -3,10 +3,7 @@ use core::{arch::asm, hint::spin_loop, ops::Index, ptr::NonNull};
 use super::IntId;
 use aarch64_cpu::registers::MPIDR_EL1;
 use alloc::boxed::Box;
-use driver_interface::{
-    DriverGeneric,
-    intc::{self, *},
-};
+use rdif_intc::*;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
 use super::*;
@@ -80,7 +77,7 @@ impl Gic {
 unsafe impl Send for Gic {}
 
 impl DriverGeneric for Gic {
-    fn open(&mut self) -> driver_interface::DriverResult {
+    fn open(&mut self) -> DriverResult {
         // Disable the distributor
         self.reg_mut().CTLR.set(0);
         self.wait_ctlr();
@@ -131,7 +128,7 @@ impl DriverGeneric for Gic {
         Ok(())
     }
 
-    fn close(&mut self) -> driver_interface::DriverResult {
+    fn close(&mut self) -> DriverResult {
         Ok(())
     }
 }
@@ -240,7 +237,7 @@ impl GicCpu {
 }
 
 impl InterfaceCPU for GicCpu {
-    fn get_and_acknowledge_interrupt(&self) -> Option<intc::IrqId> {
+    fn get_and_acknowledge_interrupt(&self) -> Option<IrqId> {
         let intid = cpu_read!("icc_iar1_el1");
 
         if intid == SPECIAL_RANGE.start as usize {
@@ -250,7 +247,7 @@ impl InterfaceCPU for GicCpu {
         }
     }
 
-    fn end_interrupt(&self, irq: intc::IrqId) {
+    fn end_interrupt(&self, irq: IrqId) {
         let intid: usize = irq.into();
         cpu_write!("icc_eoir1_el1", intid);
     }
