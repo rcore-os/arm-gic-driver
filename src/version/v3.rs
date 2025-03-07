@@ -204,6 +204,10 @@ impl Interface for Gic {
         let target = CPUTarget::from(MPID::from(mpid as u64));
         self.reg_mut().set_route(intid, target);
     }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        alloc::vec![Capability::FdtParseConfigFn(fdt_parse_irq_config)]
+    }
 }
 
 pub struct GicCpu {}

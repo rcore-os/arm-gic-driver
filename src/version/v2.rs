@@ -69,6 +69,9 @@ impl Interface for Gic {
         let target_list = 1u8 << usize::from(cpu);
         self.gicd().set_bind_cpu(irq.into(), target_list);
     }
+    fn capabilities(&self) -> Vec<Capability> {
+        alloc::vec![Capability::FdtParseConfigFn(fdt_parse_irq_config)]
+    }
 }
 
 pub struct GicCpu {

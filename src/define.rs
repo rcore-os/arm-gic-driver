@@ -48,7 +48,7 @@ impl CPUTarget {
         1 << self.aff0
     }
 }
-
+#[allow(clippy::upper_case_acronyms)]
 #[repr(C)]
 pub struct MPID {
     pub aff0: u8,
