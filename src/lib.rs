@@ -11,3 +11,4 @@ mod version;
 
 pub use rdif_intc::*;
 pub use version::*;
+pub use define::IntId;
