@@ -19,3 +19,6 @@ enum_dispatch = "0.3"
 log = "0.4"
 bitflags = "2.6.0"
 rdif-intc = "0.2"
+
+[features]
+el2 = []

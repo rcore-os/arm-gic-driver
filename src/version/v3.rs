@@ -225,11 +225,19 @@ impl GicCpu {
         rd.sgi.IGROUPR0.set(u32::MAX);
         rd.sgi.IGRPMODR0.set(u32::MAX);
 
-        let mut reg = cpu_read!("ICC_SRE_EL1");
-        if (reg & GICC_SRE_SRE) == 0 {
+        #[cfg(feature = "el2")] {
+            // Enable SRE at EL2
+            let mut reg = cpu_read!("ICC_SRE_EL2");
             reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
-            cpu_write!("ICC_SRE_EL1", reg);
+            cpu_write!("ICC_SRE_EL2", reg);
         }
+        #[cfg(not(feature = "el2"))] {
+            let mut reg = cpu_read!("ICC_SRE_EL1");
+            if (reg & GICC_SRE_SRE) == 0 {
+                reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
+                cpu_write!("ICC_SRE_EL1", reg);
+            }
+        }   
 
         cpu_write!("ICC_PMR_EL1", 0xFF);
         enable_group1();
@@ -237,6 +245,11 @@ impl GicCpu {
         cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
 
         Self {}
+    }
+
+    fn deactivate_interrupt(&self, irq: IrqId) {
+        let intid: usize = irq.into();
+        cpu_write!("icc_dir_el1", intid);
     }
 }
 
