@@ -1,7 +1,7 @@
 use core::{arch::asm, hint::spin_loop, ops::Index, ptr::NonNull};
 
 use super::IntId;
-use aarch64_cpu::registers::MPIDR_EL1;
+use aarch64_cpu::registers::{CurrentEL, MPIDR_EL1};
 use alloc::boxed::Box;
 use rdif_intc::*;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
@@ -152,7 +152,7 @@ macro_rules! cpu_write {
     }};
 }
 impl Interface for Gic {
-    fn current_cpu_setup(&self) -> HardwareCPU {
+    fn cpu_interface(&self) -> HardwareCPU {
         let rd = self.current_rd();
         Box::new(GicCpu::new(rd))
     }
@@ -206,7 +206,7 @@ impl Interface for Gic {
     }
 
     fn capabilities(&self) -> Vec<Capability> {
-        alloc::vec![Capability::FdtParseConfigFn(fdt_parse_irq_config)]
+        alloc::vec![Capability::FdtParseConfig(fdt_parse_irq_config)]
     }
 }
 
@@ -225,19 +225,17 @@ impl GicCpu {
         rd.sgi.IGROUPR0.set(u32::MAX);
         rd.sgi.IGRPMODR0.set(u32::MAX);
 
-        #[cfg(feature = "el2")] {
-            // Enable SRE at EL2
+        if CurrentEL.read(CurrentEL::EL) == 2 {
             let mut reg = cpu_read!("ICC_SRE_EL2");
             reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
             cpu_write!("ICC_SRE_EL2", reg);
-        }
-        #[cfg(not(feature = "el2"))] {
+        } else {
             let mut reg = cpu_read!("ICC_SRE_EL1");
             if (reg & GICC_SRE_SRE) == 0 {
                 reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
                 cpu_write!("ICC_SRE_EL1", reg);
             }
-        }   
+        }
 
         cpu_write!("ICC_PMR_EL1", 0xFF);
         enable_group1();
@@ -246,15 +244,26 @@ impl GicCpu {
 
         Self {}
     }
-
-    fn deactivate_interrupt(&self, irq: IrqId) {
-        let intid: usize = irq.into();
-        cpu_write!("icc_dir_el1", intid);
-    }
 }
+const ICC_CTLR_EL1_EOIMODE: usize = 1 << 1;
 
 impl InterfaceCPU for GicCpu {
-    fn get_and_acknowledge_interrupt(&self) -> Option<IrqId> {
+    fn set_eoi_mode(&self, b: bool) {
+        let mut reg = cpu_read!("ICC_CTLR_EL1");
+        if b {
+            reg |= ICC_CTLR_EL1_EOIMODE;
+        } else {
+            reg &= !ICC_CTLR_EL1_EOIMODE;
+        }
+        cpu_write!("ICC_CTLR_EL1", reg);
+    }
+
+    fn get_eoi_mode(&self) -> bool {
+        let reg = cpu_read!("ICC_CTLR_EL1");
+        (reg & ICC_CTLR_EL1_EOIMODE) != 0
+    }
+
+    fn ack(&self) -> Option<IrqId> {
         let intid = cpu_read!("icc_iar1_el1");
 
         if intid == SPECIAL_RANGE.start as usize {
@@ -264,9 +273,14 @@ impl InterfaceCPU for GicCpu {
         }
     }
 
-    fn end_interrupt(&self, irq: IrqId) {
+    fn eoi(&self, irq: IrqId) {
         let intid: usize = irq.into();
         cpu_write!("icc_eoir1_el1", intid);
+    }
+
+    fn dir(&self, irq: IrqId) {
+        let intid: usize = irq.into();
+        cpu_write!("icc_dir_el1", intid);
     }
 }
 
