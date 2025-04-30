@@ -1,7 +1,7 @@
 extern crate std;
 use crate::{
-    version::v3::{RedistributorV3, RedistributorV4, LPI, SGI},
     IntId,
+    version::v3::{LPI, RedistributorV3, RedistributorV4, SGI},
 };
 
 #[test]
