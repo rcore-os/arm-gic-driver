@@ -14,6 +14,7 @@ v2.enable_irq(irq_num);
 
 let mut v3 = v3::Gic::new(gicd, gicr).unwrap();
 v3.enable_irq(irq_num);
-let mut cpuif = v3.current_cpu_setup();
-let intid = cpuif.get_and_acknowledge_interrupt();
+let mut cpuif = v3.cpu_interface();
+let intid = cpuif.ack();
+cpuif.eoi(intid);
 ```
