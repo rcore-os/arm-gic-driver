@@ -43,12 +43,6 @@ impl DriverGeneric for Gic {
 }
 
 impl Interface for Gic {
-    fn current_cpu_setup(&self) -> HardwareCPU {
-        self.gicc().enable();
-        self.gicc().set_priority_mask(0xff);
-        Box::new(GicCpu { ptr: self.gicc })
-    }
-
     fn irq_enable(&mut self, irq: IrqId) {
         self.gicd().set_enable_interrupt(irq.into(), true);
     }
@@ -70,7 +64,13 @@ impl Interface for Gic {
         self.gicd().set_bind_cpu(irq.into(), target_list);
     }
     fn capabilities(&self) -> Vec<Capability> {
-        alloc::vec![Capability::FdtParseConfigFn(fdt_parse_irq_config)]
+        alloc::vec![Capability::FdtParseConfig(fdt_parse_irq_config)]
+    }
+
+    fn cpu_interface(&self) -> HardwareCPU {
+        self.gicc().enable();
+        self.gicc().set_priority_mask(0xff);
+        Box::new(GicCpu { ptr: self.gicc })
     }
 }
 
@@ -88,14 +88,26 @@ impl GicCpu {
 }
 
 impl InterfaceCPU for GicCpu {
-    fn get_and_acknowledge_interrupt(&self) -> Option<IrqId> {
+    fn set_eoi_mode(&self, b: bool) {
         self.gicc()
-            .get_and_acknowledge_interrupt()
-            .map(|i| (u32::from(i) as usize).into())
+            .CTLR
+            .modify(GICC_CTLR::EOIMODENS.val(if b { 1 } else { 0 }));
     }
 
-    fn end_interrupt(&self, irq: IrqId) {
-        self.gicc().end_interrupt(IntId::from(irq))
+    fn get_eoi_mode(&self) -> bool {
+        self.gicc().CTLR.is_set(GICC_CTLR::EOIMODENS)
+    }
+
+    fn ack(&self) -> Option<IrqId> {
+        self.gicc().ack().map(|i| (u32::from(i) as usize).into())
+    }
+
+    fn eoi(&self, intid: IrqId) {
+        self.gicc().eoi(intid.into())
+    }
+
+    fn dir(&self, intid: IrqId) {
+        self.gicc().dir(intid.into());
     }
 }
 
@@ -104,7 +116,7 @@ register_structs! {
     #[allow(non_snake_case)]
     pub CpuInterface {
         /// CPU Interface Control Register.
-        (0x0000 => CTLR: ReadWrite<u32>),
+        (0x0000 => CTLR: ReadWrite<u32, GICC_CTLR::Register>),
         /// Interrupt Priority Mask Register.
         (0x0004 => PMR: ReadWrite<u32>),
         /// Binary Point Register.
@@ -127,16 +139,24 @@ register_structs! {
     }
 }
 
+register_bitfields! [
+    u32,
+    pub GICC_CTLR [
+        EnableGrp0 OFFSET(0) NUMBITS(1) [],
+        EOIMODENS OFFSET(9) NUMBITS(1) [],
+    ],
+];
+
 impl CpuInterface {
     pub fn set_priority_mask(&self, priority: u8) {
         self.PMR.set(priority as u32);
     }
 
     pub fn enable(&self) {
-        self.CTLR.set(1);
+        self.CTLR.write(GICC_CTLR::EnableGrp0::SET);
     }
 
-    pub fn get_and_acknowledge_interrupt(&self) -> Option<IntId> {
+    pub fn ack(&self) -> Option<IntId> {
         let id = self.IAR.read(IAR::INTID);
         if id == 1023 {
             None
@@ -145,7 +165,11 @@ impl CpuInterface {
         }
     }
 
-    pub fn end_interrupt(&self, intid: IntId) {
+    pub fn eoi(&self, intid: IntId) {
         self.EOIR.set(intid.into())
+    }
+
+    pub fn dir(&self, intid: IntId) {
+        self.DIR.set(intid.into())
     }
 }

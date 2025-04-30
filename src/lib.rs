@@ -9,6 +9,6 @@ pub(crate) mod define;
 mod tests;
 mod version;
 
+pub use define::IntId;
 pub use rdif_intc::*;
 pub use version::*;
-pub use define::IntId;
