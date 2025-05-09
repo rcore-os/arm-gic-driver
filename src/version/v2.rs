@@ -25,9 +25,9 @@ impl Gic {
     fn gicd(&self) -> &Distributor {
         unsafe { self.gicd.as_ref() }
     }
-    fn gicc(&self) -> &CpuInterface {
-        unsafe { self.gicc.as_ref() }
-    }
+    // fn gicc(&self) -> &CpuInterface {
+    //     unsafe { self.gicc.as_ref() }
+    // }
 }
 
 impl DriverGeneric for Gic {
