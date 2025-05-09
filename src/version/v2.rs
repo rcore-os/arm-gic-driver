@@ -68,8 +68,6 @@ impl Interface for Gic {
     }
 
     fn cpu_interface(&self) -> HardwareCPU {
-        self.gicc().enable();
-        self.gicc().set_priority_mask(0xff);
         Box::new(GicCpu { ptr: self.gicc })
     }
 }
@@ -108,6 +106,11 @@ impl InterfaceCPU for GicCpu {
 
     fn dir(&self, intid: IrqId) {
         self.gicc().dir(intid.into());
+    }
+
+    fn setup(&self) {
+        self.gicc().enable();
+        self.gicc().set_priority_mask(0xff);
     }
 }
 

@@ -210,39 +210,32 @@ impl Interface for Gic {
     }
 }
 
-pub struct GicCpu {}
+pub struct GicCpu {
+    gicr: NonNull<u8>,
+}
 
 unsafe impl Send for GicCpu {}
 unsafe impl Sync for GicCpu {}
 
 impl GicCpu {
-    fn new(mut rd: NonNull<RedistributorV3>) -> Self {
-        let rd = unsafe { rd.as_mut() };
+    fn new(gicr: NonNull<u8>) -> Self {
+        Self { gicr }
+    }
 
-        rd.lpi.wake();
-        rd.sgi.ICENABLER0.set(u32::MAX);
-        rd.sgi.ICPENDR0.set(u32::MAX);
-        rd.sgi.IGROUPR0.set(u32::MAX);
-        rd.sgi.IGRPMODR0.set(u32::MAX);
+    fn rd_slice(&self) -> RDv3Slice {
+        RDv3Slice::new(self.gicr)
+    }
 
-        if CurrentEL.read(CurrentEL::EL) == 2 {
-            let mut reg = cpu_read!("ICC_SRE_EL2");
-            reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
-            cpu_write!("ICC_SRE_EL2", reg);
-        } else {
-            let mut reg = cpu_read!("ICC_SRE_EL1");
-            if (reg & GICC_SRE_SRE) == 0 {
-                reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
-                cpu_write!("ICC_SRE_EL1", reg);
+    fn current_rd(&self) -> NonNull<RedistributorV3> {
+        let want = (MPIDR_EL1.get() & 0xFFF) as u32;
+
+        for rd in self.rd_slice().iter() {
+            let affi = unsafe { rd.as_ref() }.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
+            if affi == want {
+                return rd;
             }
         }
-
-        cpu_write!("ICC_PMR_EL1", 0xFF);
-        enable_group1();
-        const GICC_CTLR_CBPR: usize = 1 << 0;
-        cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
-
-        Self {}
+        panic!("No current redistributor")
     }
 }
 const ICC_CTLR_EL1_EOIMODE: usize = 1 << 1;
@@ -281,6 +274,33 @@ impl InterfaceCPU for GicCpu {
     fn dir(&self, irq: IrqId) {
         let intid: usize = irq.into();
         cpu_write!("icc_dir_el1", intid);
+    }
+
+    fn setup(&self) {
+        let rd = unsafe { self.current_rd().as_mut() };
+
+        rd.lpi.wake();
+        rd.sgi.ICENABLER0.set(u32::MAX);
+        rd.sgi.ICPENDR0.set(u32::MAX);
+        rd.sgi.IGROUPR0.set(u32::MAX);
+        rd.sgi.IGRPMODR0.set(u32::MAX);
+
+        if CurrentEL.read(CurrentEL::EL) == 2 {
+            let mut reg = cpu_read!("ICC_SRE_EL2");
+            reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
+            cpu_write!("ICC_SRE_EL2", reg);
+        } else {
+            let mut reg = cpu_read!("ICC_SRE_EL1");
+            if (reg & GICC_SRE_SRE) == 0 {
+                reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
+                cpu_write!("ICC_SRE_EL1", reg);
+            }
+        }
+
+        cpu_write!("ICC_PMR_EL1", 0xFF);
+        enable_group1();
+        const GICC_CTLR_CBPR: usize = 1 << 0;
+        cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
     }
 }
 
