@@ -153,8 +153,7 @@ macro_rules! cpu_write {
 }
 impl Interface for Gic {
     fn cpu_interface(&self) -> HardwareCPU {
-        let rd = self.current_rd();
-        Box::new(GicCpu::new(rd))
+        Box::new(GicCpu::new(self.gicr))
     }
 
     fn irq_enable(&mut self, irq: IrqId) {
