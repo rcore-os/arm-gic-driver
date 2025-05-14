@@ -69,8 +69,8 @@ impl Interface for Gic {
         alloc::vec![Capability::FdtParseConfig(fdt_parse_irq_config)]
     }
 
-    fn cpu_interface(&self) -> CpuLocal {
-        CpuLocal::Base(Box::new(GicCpu { ptr: self.gicc }))
+    fn cpu_interface(&self) -> BoxCPU {
+        Box::new(GicCpu { ptr: self.gicc })
     }
 }
 
@@ -113,6 +113,10 @@ impl InterfaceCPU for GicCpu {
     fn setup(&self) {
         self.gicc().enable();
         self.gicc().set_priority_mask(0xff);
+    }
+
+    fn capability(&self) -> CPUCapability {
+        CPUCapability::None
     }
 }
 

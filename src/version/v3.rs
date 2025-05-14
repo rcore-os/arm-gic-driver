@@ -152,8 +152,8 @@ macro_rules! cpu_write {
     }};
 }
 impl Interface for Gic {
-    fn cpu_interface(&self) -> CpuLocal {
-        CpuLocal::IrqCtrl(Box::new(GicCpu::new(self.gicr)))
+    fn cpu_interface(&self) -> BoxCPU {
+        Box::new(GicCpu::new(self.gicr))
     }
 
     fn irq_enable(&mut self, irq: IrqId) -> Result<(), IntcError> {
@@ -210,6 +210,7 @@ impl Interface for Gic {
     }
 }
 
+#[derive(Debug)]
 pub struct GicCpu {
     gicr: NonNull<u8>,
 }
@@ -302,9 +303,14 @@ impl InterfaceCPU for GicCpu {
         const GICC_CTLR_CBPR: usize = 1 << 0;
         cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
     }
+
+    fn capability(&self) -> CPUCapability {
+        let o = Box::new(GicCpu { gicr: self.gicr });
+        CPUCapability::LocalIrq(o)
+    }
 }
 
-impl InterfaceCPUIrqCtrl for GicCpu {
+impl CPUCapLocalIrq for GicCpu {
     fn irq_enable(&self, irq: IrqId) -> Result<(), IntcError> {
         let intid = IntId::from(irq);
         if !intid.is_private() {
