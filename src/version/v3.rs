@@ -54,24 +54,24 @@ impl Gic {
             spin_loop();
         }
     }
-    fn rd_slice(&self) -> RDv3Slice {
-        RDv3Slice::new(self.gicr)
-    }
-    fn current_rd(&self) -> NonNull<RedistributorV3> {
-        let want = (MPIDR_EL1.get() & 0xFFF) as u32;
+    // fn rd_slice(&self) -> RDv3Slice {
+    //     RDv3Slice::new(self.gicr)
+    // }
+    // fn current_rd(&self) -> NonNull<RedistributorV3> {
+    //     let want = (MPIDR_EL1.get() & 0xFFF) as u32;
 
-        for rd in self.rd_slice().iter() {
-            let affi = unsafe { rd.as_ref() }.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
-            if affi == want {
-                return rd;
-            }
-        }
-        panic!("No current redistributor")
-    }
+    //     for rd in self.rd_slice().iter() {
+    //         let affi = unsafe { rd.as_ref() }.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
+    //         if affi == want {
+    //             return rd;
+    //         }
+    //     }
+    //     panic!("No current redistributor")
+    // }
 
-    fn rd_mut(&mut self) -> &mut RedistributorV3 {
-        unsafe { self.current_rd().as_mut() }
-    }
+    // fn rd_mut(&mut self) -> &mut RedistributorV3 {
+    //     unsafe { self.current_rd().as_mut() }
+    // }
 }
 
 unsafe impl Send for Gic {}
@@ -152,56 +152,57 @@ macro_rules! cpu_write {
     }};
 }
 impl Interface for Gic {
-    fn cpu_interface(&self) -> HardwareCPU {
-        Box::new(GicCpu::new(self.gicr))
+    fn cpu_interface(&self) -> CpuLocal {
+        CpuLocal::IrqCtrl(Box::new(GicCpu::new(self.gicr)))
     }
 
-    fn irq_enable(&mut self, irq: IrqId) {
+    fn irq_enable(&mut self, irq: IrqId) -> Result<(), IntcError> {
         let id = IntId::from(irq);
         if id.is_private() {
-            self.rd_mut().sgi.set_enable_interrupt(id, true);
-        } else {
-            self.reg_mut().set_enable_interrupt(id, true);
+            return Err(IntcError::IrqIdNotCompatible { id: irq });
         }
+        self.reg_mut().set_enable_interrupt(id, true);
+        Ok(())
     }
 
-    fn irq_disable(&mut self, irq: IrqId) {
+    fn irq_disable(&mut self, irq: IrqId) -> Result<(), IntcError> {
         let intid = IntId::from(irq);
         if intid.is_private() {
-            self.rd_mut().sgi.set_enable_interrupt(intid, false);
-        } else {
-            self.reg_mut().set_enable_interrupt(intid, false);
+            return Err(IntcError::IrqIdNotCompatible { id: irq });
         }
+        self.reg_mut().set_enable_interrupt(intid, false);
+        Ok(())
     }
 
-    fn set_priority(&mut self, irq: IrqId, priority: usize) {
+    fn set_priority(&mut self, irq: IrqId, priority: usize) -> Result<(), IntcError> {
         let intid = IntId::from(irq);
         if intid.is_private() {
-            self.rd_mut().sgi.set_priority(intid, priority as _);
-        } else {
-            self.reg_mut().set_priority(intid, priority as _);
+            return Err(IntcError::IrqIdNotCompatible { id: irq });
         }
+        self.reg_mut().set_priority(intid, priority as _);
+        Ok(())
     }
 
-    fn set_trigger(&mut self, irq: IrqId, trigger: Trigger) {
+    fn set_trigger(&mut self, irq: IrqId, trigger: Trigger) -> Result<(), IntcError> {
         let intid = IntId::from(irq);
         if intid.is_private() {
-            self.rd_mut().sgi.set_cfgr(intid, trigger);
-        } else {
-            self.reg_mut().set_cfgr(intid, trigger);
+            return Err(IntcError::IrqIdNotCompatible { id: irq });
         }
+        self.reg_mut().set_cfgr(intid, trigger);
+        Ok(())
     }
 
-    fn set_target_cpu(&mut self, irq: IrqId, cpu: CpuId) {
+    fn set_target_cpu(&mut self, irq: IrqId, cpu: CpuId) -> Result<(), IntcError> {
         let intid = IntId::from(irq);
         if intid.is_private() {
-            return;
-            // panic!("set_target_cpu is not supported for private interrupts");
+            return Err(IntcError::IrqIdNotCompatible { id: irq });
         }
 
         let mpid: usize = cpu.into();
         let target = CPUTarget::from(MPID::from(mpid as u64));
         self.reg_mut().set_route(intid, target);
+
+        Ok(())
     }
 
     fn capabilities(&self) -> Vec<Capability> {
@@ -300,6 +301,61 @@ impl InterfaceCPU for GicCpu {
         enable_group1();
         const GICC_CTLR_CBPR: usize = 1 << 0;
         cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
+    }
+}
+
+impl InterfaceCPUIrqCtrl for GicCpu {
+    fn irq_enable(&self, irq: IrqId) -> Result<(), IntcError> {
+        let intid = IntId::from(irq);
+        if !intid.is_private() {
+            return Err(IntcError::IrqIdNotCompatible { id: irq });
+        }
+        unsafe {
+            self.current_rd()
+                .as_mut()
+                .sgi
+                .set_enable_interrupt(intid, true)
+        };
+        Ok(())
+    }
+
+    fn irq_disable(&self, irq: IrqId) -> Result<(), IntcError> {
+        let intid = IntId::from(irq);
+        if !intid.is_private() {
+            return Err(IntcError::IrqIdNotCompatible { id: irq });
+        }
+        unsafe {
+            self.current_rd()
+                .as_mut()
+                .sgi
+                .set_enable_interrupt(intid, false)
+        };
+        Ok(())
+    }
+
+    fn set_priority(&self, irq: IrqId, priority: usize) -> Result<(), IntcError> {
+        let intid = IntId::from(irq);
+        if !intid.is_private() {
+            return Err(IntcError::IrqIdNotCompatible { id: irq });
+        }
+        unsafe {
+            self.current_rd()
+                .as_mut()
+                .sgi
+                .set_priority(intid, priority as _)
+        };
+        Ok(())
+    }
+
+    fn set_trigger(&self, irq: IrqId, trigger: Trigger) -> Result<(), IntcError> {
+        let intid = IntId::from(irq);
+        if !intid.is_private() {
+            return Err(IntcError::IrqIdNotCompatible { id: irq });
+        }
+        unsafe {
+            self.current_rd().as_mut().sgi.set_cfgr(intid, trigger);
+        };
+        Ok(())
     }
 }
 

@@ -25,9 +25,6 @@ impl Gic {
     fn gicd(&self) -> &Distributor {
         unsafe { self.gicd.as_ref() }
     }
-    // fn gicc(&self) -> &CpuInterface {
-    //     unsafe { self.gicc.as_ref() }
-    // }
 }
 
 impl DriverGeneric for Gic {
@@ -43,32 +40,37 @@ impl DriverGeneric for Gic {
 }
 
 impl Interface for Gic {
-    fn irq_enable(&mut self, irq: IrqId) {
+    fn irq_enable(&mut self, irq: IrqId) -> Result<(), IntcError> {
         self.gicd().set_enable_interrupt(irq.into(), true);
+        Ok(())
     }
 
-    fn irq_disable(&mut self, irq: IrqId) {
+    fn irq_disable(&mut self, irq: IrqId) -> Result<(), IntcError> {
         self.gicd().set_enable_interrupt(irq.into(), false);
+        Ok(())
     }
 
-    fn set_priority(&mut self, irq: IrqId, priority: usize) {
+    fn set_priority(&mut self, irq: IrqId, priority: usize) -> Result<(), IntcError> {
         self.gicd().set_priority(irq.into(), priority as _);
+        Ok(())
     }
 
-    fn set_trigger(&mut self, irq: IrqId, trigger: Trigger) {
+    fn set_trigger(&mut self, irq: IrqId, trigger: Trigger) -> Result<(), IntcError> {
         self.gicd().set_cfgr(irq.into(), trigger);
+        Ok(())
     }
 
-    fn set_target_cpu(&mut self, irq: IrqId, cpu: CpuId) {
+    fn set_target_cpu(&mut self, irq: IrqId, cpu: CpuId) -> Result<(), IntcError> {
         let target_list = 1u8 << usize::from(cpu);
         self.gicd().set_bind_cpu(irq.into(), target_list);
+        Ok(())
     }
     fn capabilities(&self) -> Vec<Capability> {
         alloc::vec![Capability::FdtParseConfig(fdt_parse_irq_config)]
     }
 
-    fn cpu_interface(&self) -> HardwareCPU {
-        Box::new(GicCpu { ptr: self.gicc })
+    fn cpu_interface(&self) -> CpuLocal {
+        CpuLocal::Base(Box::new(GicCpu { ptr: self.gicc }))
     }
 }
 
