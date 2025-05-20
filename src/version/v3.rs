@@ -77,7 +77,7 @@ impl Gic {
 unsafe impl Send for Gic {}
 
 impl DriverGeneric for Gic {
-    fn open(&mut self) -> DriverResult {
+    fn open(&mut self) -> Result<(), ErrorBase> {
         // Disable the distributor
         self.reg_mut().CTLR.set(0);
         self.wait_ctlr();
@@ -128,7 +128,7 @@ impl DriverGeneric for Gic {
         Ok(())
     }
 
-    fn close(&mut self) -> DriverResult {
+    fn close(&mut self) -> Result<(), ErrorBase> {
         Ok(())
     }
 }

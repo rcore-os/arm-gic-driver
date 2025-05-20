@@ -28,13 +28,13 @@ impl Gic {
 }
 
 impl DriverGeneric for Gic {
-    fn open(&mut self) -> DriverResult {
+    fn open(&mut self) -> Result<(), ErrorBase> {
         self.gicd().disable_all_interrupts();
         self.gicd().CTLR.write(CTLR::EnableGrp0::SET);
         Ok(())
     }
 
-    fn close(&mut self) -> DriverResult {
+    fn close(&mut self) -> Result<(), ErrorBase> {
         Ok(())
     }
 }

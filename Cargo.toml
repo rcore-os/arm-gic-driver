@@ -1,6 +1,6 @@
 [package]
 name = "arm-gic-driver"
-version = "0.10.2"
+version = "0.11.0"
 edition = "2024"
 license = "MIT"
 description = "A driver for the Arm Generic Interrupt Controller version 1-4."
@@ -17,5 +17,5 @@ tock-registers = { version = "0.9" }
 aarch64-cpu = "10.0"
 enum_dispatch = "0.3"
 log = "0.4"
-bitflags = "2.6.0"
-rdif-intc = "0.6.4"
+bitflags = "2.9"
+rdif-intc = "0.7.0"
