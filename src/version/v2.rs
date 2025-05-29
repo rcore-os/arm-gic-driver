@@ -28,13 +28,13 @@ impl Gic {
 }
 
 impl DriverGeneric for Gic {
-    fn open(&mut self) -> Result<(), ErrorBase> {
+    fn open(&mut self) -> Result<(), KError> {
         self.gicd().disable_all_interrupts();
         self.gicd().CTLR.write(CTLR::EnableGrp0::SET);
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), ErrorBase> {
+    fn close(&mut self) -> Result<(), KError> {
         Ok(())
     }
 }
@@ -65,12 +65,13 @@ impl Interface for Gic {
         self.gicd().set_bind_cpu(irq.into(), target_list);
         Ok(())
     }
-    fn capabilities(&self) -> Vec<Capability> {
-        alloc::vec![Capability::FdtParseConfig(fdt_parse_irq_config)]
+
+    fn parse_dtb_fn(&self) -> Option<FuncFdtParseConfig> {
+        Some(fdt_parse_irq_config)
     }
 
-    fn cpu_interface(&self) -> BoxCPU {
-        Box::new(GicCpu { ptr: self.gicc })
+    fn cpu_local(&self) -> Option<local::Boxed> {
+        Some(Box::new(GicCpu { ptr: self.gicc }))
     }
 }
 
@@ -87,7 +88,19 @@ impl GicCpu {
     }
 }
 
-impl InterfaceCPU for GicCpu {
+impl DriverGeneric for GicCpu {
+    fn open(&mut self) -> Result<(), KError> {
+        self.gicc().enable();
+        self.gicc().set_priority_mask(0xff);
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), KError> {
+        Ok(())
+    }
+}
+
+impl local::Interface for GicCpu {
     fn set_eoi_mode(&self, b: bool) {
         self.gicc()
             .CTLR
@@ -110,13 +123,8 @@ impl InterfaceCPU for GicCpu {
         self.gicc().dir(intid.into());
     }
 
-    fn setup(&self) {
-        self.gicc().enable();
-        self.gicc().set_priority_mask(0xff);
-    }
-
-    fn capability(&self) -> CPUCapability {
-        CPUCapability::None
+    fn capability(&self) -> local::Capability {
+        local::Capability::None
     }
 }
 

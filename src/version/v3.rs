@@ -54,30 +54,12 @@ impl Gic {
             spin_loop();
         }
     }
-    // fn rd_slice(&self) -> RDv3Slice {
-    //     RDv3Slice::new(self.gicr)
-    // }
-    // fn current_rd(&self) -> NonNull<RedistributorV3> {
-    //     let want = (MPIDR_EL1.get() & 0xFFF) as u32;
-
-    //     for rd in self.rd_slice().iter() {
-    //         let affi = unsafe { rd.as_ref() }.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
-    //         if affi == want {
-    //             return rd;
-    //         }
-    //     }
-    //     panic!("No current redistributor")
-    // }
-
-    // fn rd_mut(&mut self) -> &mut RedistributorV3 {
-    //     unsafe { self.current_rd().as_mut() }
-    // }
 }
 
 unsafe impl Send for Gic {}
 
 impl DriverGeneric for Gic {
-    fn open(&mut self) -> Result<(), ErrorBase> {
+    fn open(&mut self) -> Result<(), KError> {
         // Disable the distributor
         self.reg_mut().CTLR.set(0);
         self.wait_ctlr();
@@ -128,7 +110,7 @@ impl DriverGeneric for Gic {
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), ErrorBase> {
+    fn close(&mut self) -> Result<(), KError> {
         Ok(())
     }
 }
@@ -152,8 +134,12 @@ macro_rules! cpu_write {
     }};
 }
 impl Interface for Gic {
-    fn cpu_interface(&self) -> BoxCPU {
-        Box::new(GicCpu::new(self.gicr))
+    fn parse_dtb_fn(&self) -> Option<FuncFdtParseConfig> {
+        Some(fdt_parse_irq_config)
+    }
+
+    fn cpu_local(&self) -> Option<local::Boxed> {
+        Some(Box::new(GicCpu::new(self.gicr)))
     }
 
     fn irq_enable(&mut self, irq: IrqId) -> Result<(), IntcError> {
@@ -204,10 +190,6 @@ impl Interface for Gic {
 
         Ok(())
     }
-
-    fn capabilities(&self) -> Vec<Capability> {
-        alloc::vec![Capability::FdtParseConfig(fdt_parse_irq_config)]
-    }
 }
 
 #[derive(Debug)]
@@ -241,7 +223,42 @@ impl GicCpu {
 }
 const ICC_CTLR_EL1_EOIMODE: usize = 1 << 1;
 
-impl InterfaceCPU for GicCpu {
+impl DriverGeneric for GicCpu {
+    fn open(&mut self) -> Result<(), KError> {
+        let rd = unsafe { self.current_rd().as_mut() };
+
+        rd.lpi.wake();
+        rd.sgi.ICENABLER0.set(u32::MAX);
+        rd.sgi.ICPENDR0.set(u32::MAX);
+        rd.sgi.IGROUPR0.set(u32::MAX);
+        rd.sgi.IGRPMODR0.set(u32::MAX);
+
+        if CurrentEL.read(CurrentEL::EL) == 2 {
+            let mut reg = cpu_read!("ICC_SRE_EL2");
+            reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
+            cpu_write!("ICC_SRE_EL2", reg);
+        } else {
+            let mut reg = cpu_read!("ICC_SRE_EL1");
+            if (reg & GICC_SRE_SRE) == 0 {
+                reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
+                cpu_write!("ICC_SRE_EL1", reg);
+            }
+        }
+
+        cpu_write!("ICC_PMR_EL1", 0xFF);
+        enable_group1();
+        const GICC_CTLR_CBPR: usize = 1 << 0;
+        cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
+
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), KError> {
+        Ok(())
+    }
+}
+
+impl local::Interface for GicCpu {
     fn set_eoi_mode(&self, b: bool) {
         let mut reg = cpu_read!("ICC_CTLR_EL1");
         if b {
@@ -277,40 +294,13 @@ impl InterfaceCPU for GicCpu {
         cpu_write!("icc_dir_el1", intid);
     }
 
-    fn setup(&self) {
-        let rd = unsafe { self.current_rd().as_mut() };
-
-        rd.lpi.wake();
-        rd.sgi.ICENABLER0.set(u32::MAX);
-        rd.sgi.ICPENDR0.set(u32::MAX);
-        rd.sgi.IGROUPR0.set(u32::MAX);
-        rd.sgi.IGRPMODR0.set(u32::MAX);
-
-        if CurrentEL.read(CurrentEL::EL) == 2 {
-            let mut reg = cpu_read!("ICC_SRE_EL2");
-            reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
-            cpu_write!("ICC_SRE_EL2", reg);
-        } else {
-            let mut reg = cpu_read!("ICC_SRE_EL1");
-            if (reg & GICC_SRE_SRE) == 0 {
-                reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
-                cpu_write!("ICC_SRE_EL1", reg);
-            }
-        }
-
-        cpu_write!("ICC_PMR_EL1", 0xFF);
-        enable_group1();
-        const GICC_CTLR_CBPR: usize = 1 << 0;
-        cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
-    }
-
-    fn capability(&self) -> CPUCapability {
+    fn capability(&self) -> local::Capability {
         let o = Box::new(GicCpu { gicr: self.gicr });
-        CPUCapability::LocalIrq(o)
+        local::Capability::LocalIrq(o)
     }
 }
 
-impl CPUCapLocalIrq for GicCpu {
+impl local::cap::LocalIrq for GicCpu {
     fn irq_enable(&self, irq: IrqId) -> Result<(), IntcError> {
         let intid = IntId::from(irq);
         if !intid.is_private() {
