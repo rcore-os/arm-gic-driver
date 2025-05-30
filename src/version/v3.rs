@@ -296,11 +296,11 @@ impl local::Interface for GicCpu {
 
     fn capability(&self) -> local::Capability {
         let o = Box::new(GicCpu { gicr: self.gicr });
-        local::Capability::LocalIrq(o)
+        local::Capability::ConfigLocalIrq(o)
     }
 }
 
-impl local::cap::LocalIrq for GicCpu {
+impl local::cap::ConfigLocalIrq for GicCpu {
     fn irq_enable(&self, irq: IrqId) -> Result<(), IntcError> {
         let intid = IntId::from(irq);
         if !intid.is_private() {

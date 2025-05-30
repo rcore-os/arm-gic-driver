@@ -234,12 +234,13 @@ pub fn fdt_parse_irq_config(itr: &[u32]) -> Result<IrqConfig, Box<dyn Error>> {
 
     let num = itr[1];
 
-    let irq_id: u32 = match itr[0] {
+    let intid = match itr[0] {
         SPI => IntId::spi(num),
         PPI => IntId::ppi(num),
         _ => panic!("Invalid irq type {}", itr[0]),
-    }
-    .into();
+    };
+    let is_private = intid.is_private();
+    let irq_id: u32 = intid.into();
 
     let flag = TriggerFlag::from_bits_truncate(itr[2] as _);
 
@@ -260,5 +261,6 @@ pub fn fdt_parse_irq_config(itr: &[u32]) -> Result<IrqConfig, Box<dyn Error>> {
     Ok(IrqConfig {
         irq: (irq_id as usize).into(),
         trigger,
+        is_private,
     })
 }
