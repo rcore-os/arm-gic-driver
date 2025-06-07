@@ -644,10 +644,9 @@ register_bitfields! [
 fn enable_group1() {
     unsafe {
         asm!(
-            "
-    MOV   w0, #1
-    MSR   ICC_IGRPEN1_EL1, x0
-    ISB"
+            "msr icc_igrpen1_el1, {0:x}",
+            "isb",
+            in(reg) 1, // Enable Group 1 interrupts
         )
     }
 }
