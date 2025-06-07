@@ -24,6 +24,13 @@ impl Default for Security {
     }
 }
 
+// Things maybe necessary to implement:
+// - Better names for structs and interfaces. `Gic`, `GicCpu`, and `Interface` are quite generic.
+// - Decoupling the structs for GICv3 Distributor and Redistributor interfaces.
+// - Replace `NonNull<u8>` with more specific types like `VirtAddr` or `PhysAddr` for clarity.
+// - ...
+
+/// The GICv3 Distributor interface and Redistributor base address.
 pub struct Gic {
     gicd: NonNull<Distributor>,
     gicr: NonNull<u8>,
@@ -54,6 +61,33 @@ impl Gic {
             spin_loop();
         }
     }
+
+    pub fn get_gicr(&self) -> GicCpu {
+        GicCpu::new(self.gicr)
+    }
+
+    pub fn security_supported(&self) -> bool {
+        let gicd_typer = self.reg().TYPER.get();
+        const GICD_TYPER_SECURITY_EXTN: u32 = 1 << 10;
+
+        if gicd_typer & GICD_TYPER_SECURITY_EXTN == 0 {
+            // GIC does not support security extension explicitly.
+            return false;
+        }
+
+        // Recheck CTLR.DS bit.
+
+        let gicd_ctlr_ds = self.reg().CTLR.read(super::CTLR::DS);
+
+        if gicd_ctlr_ds != 0 {
+            // we assume that we are the first one to access the GIC, so if we find the DS bit set,
+            // which is expected to reset to 0, we can assume that the GIC support only single
+            // security state.
+            return false;
+        }
+
+        true
+    }
 }
 
 unsafe impl Send for Gic {}
@@ -66,7 +100,14 @@ impl DriverGeneric for Gic {
 
         self.max_spi_num = self.reg().max_spi_num();
 
+        if !self.security_supported() {
+            self.security = Security::OneNS;
+        }
+
+        // Set CTLR.DS (disable security) bit to disable security.
         if matches!(self.security, Security::OneNS) {
+            // It seems to be safe to set the DS bit to 1 even if the GIC does not support security
+            // extensions.
             self.reg_mut().CTLR.modify(CTLR::DS::SET);
         }
 
@@ -105,8 +146,12 @@ impl DriverGeneric for Gic {
             Security::OneNS => self
                 .reg_mut()
                 .CTLR
-                .write(CTLR::ARE_S::SET + CTLR::EnableGrp1S::SET),
+                .write(CTLR::ARE_S::SET + CTLR::EnableGrp1S::SET + CTLR::EnableGrp1NS::SET),
+            // dunno why CTLR.EnableGrp1S is set here before but keep it as is.
         }
+
+        self.wait_ctlr();
+
         Ok(())
     }
 
@@ -133,13 +178,14 @@ macro_rules! cpu_write {
         }
     }};
 }
+
 impl Interface for Gic {
     fn parse_dtb_fn(&self) -> Option<FuncFdtParseConfig> {
         Some(fdt_parse_irq_config)
     }
 
     fn cpu_local(&self) -> Option<local::Boxed> {
-        Some(Box::new(GicCpu::new(self.gicr)))
+        Some(Box::new(self.get_gicr()))
     }
 
     fn irq_enable(&mut self, irq: IrqId) -> Result<(), IntcError> {
@@ -192,6 +238,10 @@ impl Interface for Gic {
     }
 }
 
+/// A **SHARED** GICv3 Redistributor interface.
+///
+/// This struct contains only the Redistributor base address and locate the current Redistributor
+/// for the current CPU dynamically using the MPIDR_EL1 register.
 #[derive(Debug)]
 pub struct GicCpu {
     gicr: NonNull<u8>,
