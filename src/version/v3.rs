@@ -130,6 +130,8 @@ impl DriverGeneric for Gic {
 
         self.wait_ctlr();
 
+        // WARN: 1024 is wrong!! it should be 1020
+        // TODO: fix this number
         for reg in self.reg_mut().IPRIORITYR.iter_mut() {
             reg.set(0xa0);
         }
@@ -263,8 +265,10 @@ impl GicCpu {
         let want = (MPIDR_EL1.get() & 0xFFF) as u32;
 
         for rd in self.rd_slice().iter() {
+            log::trace!("Checking Redistributor: {:p}", rd.as_ptr());
             let affi = unsafe { rd.as_ref() }.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
             if affi == want {
+                log::trace!("Found current redistributor: {:p}", rd.as_ptr());
                 return rd;
             }
         }
