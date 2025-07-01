@@ -135,10 +135,9 @@ impl DriverGeneric for Gic {
             // 根据手册, 要先设grp, 再设 ARE, 否则崩
             self.reg_mut()
                 .CTLR
-                .modify(CTLR::EnableGrp1NS::SET + CTLR::EnableGrp1S::SET);
+                .modify(CTLR::EnableGrp1NS::SET);
             self.wait_ctlr().unwrap();
-            // ns\s ARE 都是 1 << 4
-            self.reg_mut().CTLR.modify(CTLR::ARE_S::SET);
+            self.reg_mut().CTLR.modify(CTLR::ARE_NS::SET);
         }
 
         self.wait_ctlr().unwrap();
