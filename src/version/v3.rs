@@ -67,16 +67,6 @@ impl DriverGeneric for Gic {
     fn open(&mut self) -> Result<(), KError> {
         self.max_spi_num = self.reg().max_spi_num();
 
-        // 关闭所有中断, 清除 pending 状态
-        for reg in self.reg_mut().ICENABLER.iter_mut() {
-            reg.set(u32::MAX);
-        }
-
-        for reg in self.reg_mut().ICPENDR.iter_mut() {
-            reg.set(u32::MAX);
-        }
-
-        self.wait_ctlr();
         if self.reg().CTLR.is_set(CTLR::DS) {
             if self.reg().security_supported() {
                 debug!("GICv3 Distributor disables security, with security extension support.");
@@ -124,6 +114,15 @@ impl DriverGeneric for Gic {
         }
 
         self.wait_ctlr();
+
+        // 关闭所有中断, 清除 pending 状态
+        for reg in self.reg_mut().ICENABLER.iter_mut() {
+            reg.set(u32::MAX);
+        }
+
+        for reg in self.reg_mut().ICPENDR.iter_mut() {
+            reg.set(u32::MAX);
+        }
 
         // 中断全部设为 Group 1
         for reg in self.reg_mut().IGROUPR.iter_mut() {
