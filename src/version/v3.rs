@@ -71,6 +71,8 @@ unsafe impl Send for Gic {}
 impl DriverGeneric for Gic {
     fn open(&mut self) -> Result<(), KError> {
         debug!("GICv3 Distributor open...");
+        let ctrl = self.reg_mut().CTLR.get();
+        debug!("GICv3 Distributor CTLR: {ctrl:#x}");
 
         self.max_spi_num = self.reg().max_spi_num();
 
@@ -88,6 +90,12 @@ impl DriverGeneric for Gic {
             reg.set(u32::MAX);
         }
 
+        self.wait_ctlr().unwrap();
+
+        if self.disable_security {
+            self.reg_mut().CTLR.write(CTLR::DS::SET);
+        }
+
         for reg in self.reg_mut().IGRPMODR.iter() {
             reg.set(u32::MAX);
         }
@@ -99,12 +107,7 @@ impl DriverGeneric for Gic {
         for reg in self.reg_mut().ICFGR.iter_mut() {
             reg.set(0x0);
         }
-        self.wait_ctlr().unwrap();
-
-        if self.disable_security {
-            self.reg_mut().CTLR.write(CTLR::DS::SET);
-        }
-
+       
         self.wait_ctlr().unwrap();
 
         // ds 不一定允许设为 1, 需要根据厂商实现
