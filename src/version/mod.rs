@@ -63,8 +63,10 @@ register_bitfields! [
     u32,
     pub CTLR [
         EnableGrp0 OFFSET(0) NUMBITS(1) [],
-        EnableGrp1 OFFSET(1) NUMBITS(1) [],
-        ARE OFFSET(4) NUMBITS(1) [ ],
+        EnableGrp1NS OFFSET(1) NUMBITS(1) [],
+        EnableGrp1S OFFSET(2) NUMBITS(1) [],
+        ARE_S OFFSET(4) NUMBITS(1) [],
+        ARE_NS OFFSET(5) NUMBITS(1) [],
         DS OFFSET(6) NUMBITS(1) [],
         RWP OFFSET(31) NUMBITS(1) [],
     ],

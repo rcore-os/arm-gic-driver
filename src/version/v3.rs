@@ -26,8 +26,7 @@ const GICC_SRE_DIB: usize = 1 << 2;
 pub struct Gic {
     gicd: NonNull<Distributor>,
     gicr: NonNull<u8>,
-    // 当前位于 security 模式还是 non-security 模式
-    pub is_in_security: Option<bool>,
+    pub disable_security: bool,
     max_spi_num: usize,
 }
 
@@ -37,7 +36,7 @@ impl Gic {
             gicd: gicd.cast(),
             gicr,
             max_spi_num: 0,
-            is_in_security: None,
+            disable_security: false,
         }
     }
 
@@ -49,11 +48,17 @@ impl Gic {
         unsafe { self.gicd.as_mut() }
     }
 
-    fn wait_ctlr(&self) {
+    fn wait_ctlr(&self) -> Result<(), &'static str> {
+        let mut time_out_count = 1000;
         while self.reg().CTLR.is_set(CTLR::RWP) {
             spin_loop();
+            time_out_count -= 1;
+            if time_out_count == 0 {
+                return Err("GICv3 Distributor CTLR RWP wait timeout.");
+            }
         }
         barrier::isb(barrier::SY);
+        Ok(())
     }
 
     pub fn get_gicr(&self) -> GicCpu {
@@ -66,54 +71,6 @@ unsafe impl Send for Gic {}
 impl DriverGeneric for Gic {
     fn open(&mut self) -> Result<(), KError> {
         self.max_spi_num = self.reg().max_spi_num();
-
-        if self.reg().CTLR.is_set(CTLR::DS) {
-            if self.reg().security_supported() {
-                debug!("GICv3 Distributor disables security, with security extension support.");
-                self.reg_mut().CTLR.set(
-                    (CTLR_TWO_S::ARE_NS::SET
-                        + CTLR_TWO_S::ARE_S::SET
-                        + CTLR_TWO_S::EnableGrp1S::SET
-                        + CTLR_TWO_S::EnableGrp1NS::SET
-                        + CTLR_TWO_S::EnableGrp0::SET)
-                        .value,
-                );
-            } else {
-                debug!("GICv3 Distributor disables security, without security extension support.");
-                self.reg_mut()
-                    .CTLR
-                    .set((CTLR_ONE_NS::ARE::SET + CTLR_ONE_NS::EnableGrp1::SET).value);
-            }
-        } else {
-            debug!("GICv3 Distributor is in two security mode with DS=0.");
-            if let Some(s) = self.is_in_security {
-                if s {
-                    // 在 security 模式下
-                    self.reg_mut().CTLR.set(
-                        (CTLR_TWO_S::ARE_NS::SET
-                            + CTLR_TWO_S::ARE_S::SET
-                            + CTLR_TWO_S::EnableGrp1NS::SET
-                            + CTLR_TWO_S::EnableGrp0::SET)
-                            .value,
-                    );
-                } else {
-                    // 在 non-security 模式下
-                    self.reg_mut()
-                        .CTLR
-                        .set((CTLR_TWO_NS::ARE_NS::SET + CTLR_TWO_NS::EnableGrp1::SET).value);
-                }
-            } else {
-                // 不确定是在security 模式还是 non-security 模式, ARE_NS 和 ARE_S 都设置为 1
-                self.reg_mut().CTLR.set(
-                    (CTLR_TWO_S::ARE_NS::SET
-                        + CTLR_TWO_S::ARE_S::SET
-                        + CTLR_TWO_S::EnableGrp1NS::SET)
-                        .value,
-                );
-            }
-        }
-
-        self.wait_ctlr();
 
         // 关闭所有中断, 清除 pending 状态
         for reg in self.reg_mut().ICENABLER.iter_mut() {
@@ -140,6 +97,49 @@ impl DriverGeneric for Gic {
         for reg in self.reg_mut().ICFGR.iter_mut() {
             reg.set(0x0);
         }
+        self.wait_ctlr().unwrap();
+
+        if self.disable_security {
+            self.reg_mut().CTLR.write(CTLR::DS::SET);
+        }
+
+        self.wait_ctlr().unwrap();
+
+        // ds 不一定允许设为 1, 需要根据厂商实现
+        if self.reg().CTLR.is_set(CTLR::DS) {
+            if self.reg().security_supported() {
+                debug!("GICv3 Distributor disables security, with security extension support.");
+                self.reg_mut()
+                    .CTLR
+                    .modify(CTLR::EnableGrp0::SET + CTLR::EnableGrp1S::SET);
+                self.wait_ctlr().unwrap();
+                self.reg_mut().CTLR.modify(CTLR::ARE_S::SET);
+            } else {
+                debug!("GICv3 Distributor disables security, without security extension support.");
+                self.reg_mut()
+                    .CTLR
+                    .modify(CTLR::EnableGrp0::SET 
+                        // 在没有安全扩展的情况下, grp1是 1 << 1
+                        + CTLR::EnableGrp1NS::SET);
+                self.wait_ctlr().unwrap();
+                self.reg_mut().CTLR.modify(CTLR::ARE_S::SET);
+            }
+        } else {
+            if self.disable_security {
+                debug!("disable_security not allowed.");
+            }
+
+            debug!("GICv3 Distributor is in two security mode with DS=0.");
+            // 根据手册, 要先设grp, 再设 ARE, 否则崩
+            self.reg_mut()
+                .CTLR
+                .modify(CTLR::EnableGrp1NS::SET + CTLR::EnableGrp1S::SET);
+            self.wait_ctlr().unwrap();
+            // ns\s ARE 都是 1 << 4
+            self.reg_mut().CTLR.modify(CTLR::ARE_S::SET);
+        }
+
+        self.wait_ctlr().unwrap();
 
         Ok(())
     }
