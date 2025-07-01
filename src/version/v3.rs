@@ -70,6 +70,8 @@ unsafe impl Send for Gic {}
 
 impl DriverGeneric for Gic {
     fn open(&mut self) -> Result<(), KError> {
+        debug!("GICv3 Distributor open...");
+
         self.max_spi_num = self.reg().max_spi_num();
 
         // 关闭所有中断, 清除 pending 状态
@@ -264,6 +266,7 @@ const ICC_CTLR_EL1_EOIMODE: usize = 1 << 1;
 
 impl DriverGeneric for GicCpu {
     fn open(&mut self) -> Result<(), KError> {
+        debug!("GICv3 CPU Interface open...");
         let rd = unsafe { self.current_rd().as_mut() };
 
         rd.lpi.wake();
