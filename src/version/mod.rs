@@ -63,16 +63,18 @@ register_bitfields! [
     u32,
     pub CTLR [
         EnableGrp0 OFFSET(0) NUMBITS(1) [],
-        EnableGrp1NS OFFSET(1) NUMBITS(1) [],
-        EnableGrp1S OFFSET(2) NUMBITS(1) [],
-        ARE_S OFFSET(4) NUMBITS(1) [],
-        ARE_NS OFFSET(5) NUMBITS(1) [],
+        EnableGrp1 OFFSET(1) NUMBITS(1) [],
+        ARE OFFSET(4) NUMBITS(1) [ ],
         DS OFFSET(6) NUMBITS(1) [],
         RWP OFFSET(31) NUMBITS(1) [],
     ],
     TYPER [
         ITLinesNumber OFFSET(0) NUMBITS(5) [],
-        CPUNumber OFFSET(5) NUMBITS(3) []
+        CPUNumber OFFSET(5) NUMBITS(3) [],
+        SecurityExtn OFFSET(10) NUMBITS(1) [
+            SingleSecurity = 0,
+            TwoSecurity = 1,
+        ],
     ],
     IIDR [
         Implementer OFFSET(0) NUMBITS(12) [],
@@ -209,7 +211,13 @@ impl Distributor {
             Trigger::LevelLow => v & !bit,
         })
     }
-
+    fn security_supported(&self) -> bool {
+        match self.TYPER.read_as_enum(TYPER::SecurityExtn) {
+            Some(TYPER::SecurityExtn::Value::SingleSecurity) => false,
+            Some(TYPER::SecurityExtn::Value::TwoSecurity) => true,
+            None => false,
+        }
+    }
     // pub fn cpu_num(&self) -> u32 {
     //     self.TYPER.read(TYPER::CPUNumber) + 1
     // }

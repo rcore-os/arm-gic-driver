@@ -1,8 +1,12 @@
 use core::{arch::asm, hint::spin_loop, ops::Index, ptr::NonNull};
 
 use super::IntId;
-use aarch64_cpu::registers::{CurrentEL, MPIDR_EL1};
+use aarch64_cpu::{
+    asm::barrier,
+    registers::{CurrentEL, MPIDR_EL1},
+};
 use alloc::boxed::Box;
+use log::debug;
 use rdif_intc::*;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
@@ -11,18 +15,6 @@ use super::*;
 const GICC_SRE_SRE: usize = 1 << 0;
 const GICC_SRE_DFB: usize = 1 << 1;
 const GICC_SRE_DIB: usize = 1 << 2;
-
-#[derive(Debug, Clone, Copy)]
-pub enum Security {
-    Two,
-    OneNS,
-}
-
-impl Default for Security {
-    fn default() -> Self {
-        Self::Two
-    }
-}
 
 // Things maybe necessary to implement:
 // - Better names for structs and interfaces. `Gic`, `GicCpu`, and `Interface` are quite generic.
@@ -34,17 +26,18 @@ impl Default for Security {
 pub struct Gic {
     gicd: NonNull<Distributor>,
     gicr: NonNull<u8>,
-    security: Security,
+    // 当前位于 security 模式还是 non-security 模式
+    pub is_in_security: Option<bool>,
     max_spi_num: usize,
 }
 
 impl Gic {
-    pub fn new(gicd: NonNull<u8>, gicr: NonNull<u8>, security: Security) -> Self {
+    pub fn new(gicd: NonNull<u8>, gicr: NonNull<u8>) -> Self {
         Self {
             gicd: gicd.cast(),
             gicr,
-            security,
             max_spi_num: 0,
+            is_in_security: None,
         }
     }
 
@@ -60,33 +53,11 @@ impl Gic {
         while self.reg().CTLR.is_set(CTLR::RWP) {
             spin_loop();
         }
+        barrier::isb(barrier::SY);
     }
 
     pub fn get_gicr(&self) -> GicCpu {
         GicCpu::new(self.gicr)
-    }
-
-    pub fn security_supported(&self) -> bool {
-        let gicd_typer = self.reg().TYPER.get();
-        const GICD_TYPER_SECURITY_EXTN: u32 = 1 << 10;
-
-        if gicd_typer & GICD_TYPER_SECURITY_EXTN == 0 {
-            // GIC does not support security extension explicitly.
-            return false;
-        }
-
-        // Recheck CTLR.DS bit.
-
-        let gicd_ctlr_ds = self.reg().CTLR.read(super::CTLR::DS);
-
-        if gicd_ctlr_ds != 0 {
-            // we assume that we are the first one to access the GIC, so if we find the DS bit set,
-            // which is expected to reset to 0, we can assume that the GIC support only single
-            // security state.
-            return false;
-        }
-
-        true
     }
 }
 
@@ -94,24 +65,9 @@ unsafe impl Send for Gic {}
 
 impl DriverGeneric for Gic {
     fn open(&mut self) -> Result<(), KError> {
-        // Disable the distributor
-        self.reg_mut().CTLR.set(0);
-        self.wait_ctlr();
-
         self.max_spi_num = self.reg().max_spi_num();
 
-        if !self.security_supported() {
-            self.security = Security::OneNS;
-        }
-
-        // Set CTLR.DS (disable security) bit to disable security.
-        if matches!(self.security, Security::OneNS) {
-            // It seems to be safe to set the DS bit to 1 even if the GIC does not support security
-            // extensions.
-            self.reg_mut().CTLR.modify(CTLR::DS::SET);
-        }
-
-        // 关闭所有中断，并将中断分组默认为group 1
+        // 关闭所有中断, 清除 pending 状态
         for reg in self.reg_mut().ICENABLER.iter_mut() {
             reg.set(u32::MAX);
         }
@@ -120,6 +76,56 @@ impl DriverGeneric for Gic {
             reg.set(u32::MAX);
         }
 
+        self.wait_ctlr();
+        if self.reg().CTLR.is_set(CTLR::DS) {
+            if self.reg().security_supported() {
+                debug!("GICv3 Distributor disables security, with security extension support.");
+                self.reg_mut().CTLR.set(
+                    (CTLR_TWO_S::ARE_NS::SET
+                        + CTLR_TWO_S::ARE_S::SET
+                        + CTLR_TWO_S::EnableGrp1S::SET
+                        + CTLR_TWO_S::EnableGrp1NS::SET
+                        + CTLR_TWO_S::EnableGrp0::SET)
+                        .value,
+                );
+            } else {
+                debug!("GICv3 Distributor disables security, without security extension support.");
+                self.reg_mut()
+                    .CTLR
+                    .set((CTLR_ONE_NS::ARE::SET + CTLR_ONE_NS::EnableGrp1::SET).value);
+            }
+        } else {
+            debug!("GICv3 Distributor is in two security mode with DS=0.");
+            if let Some(s) = self.is_in_security {
+                if s {
+                    // 在 security 模式下
+                    self.reg_mut().CTLR.set(
+                        (CTLR_TWO_S::ARE_NS::SET
+                            + CTLR_TWO_S::ARE_S::SET
+                            + CTLR_TWO_S::EnableGrp1NS::SET
+                            + CTLR_TWO_S::EnableGrp0::SET)
+                            .value,
+                    );
+                } else {
+                    // 在 non-security 模式下
+                    self.reg_mut()
+                        .CTLR
+                        .set((CTLR_TWO_NS::ARE_NS::SET + CTLR_TWO_NS::EnableGrp1::SET).value);
+                }
+            } else {
+                // 不确定是在security 模式还是 non-security 模式, ARE_NS 和 ARE_S 都设置为 1
+                self.reg_mut().CTLR.set(
+                    (CTLR_TWO_S::ARE_NS::SET
+                        + CTLR_TWO_S::ARE_S::SET
+                        + CTLR_TWO_S::EnableGrp1NS::SET)
+                        .value,
+                );
+            }
+        }
+
+        self.wait_ctlr();
+
+        // 中断全部设为 Group 1
         for reg in self.reg_mut().IGROUPR.iter_mut() {
             reg.set(u32::MAX);
         }
@@ -128,8 +134,6 @@ impl DriverGeneric for Gic {
             reg.set(u32::MAX);
         }
 
-        self.wait_ctlr();
-
         for reg in self.reg_mut().IPRIORITYR.iter_mut() {
             reg.set(0xa0);
         }
@@ -137,20 +141,6 @@ impl DriverGeneric for Gic {
         for reg in self.reg_mut().ICFGR.iter_mut() {
             reg.set(0x0);
         }
-
-        match self.security {
-            Security::Two => self
-                .reg_mut()
-                .CTLR
-                .write(CTLR::ARE_NS::SET + CTLR::EnableGrp1NS::SET),
-            Security::OneNS => self
-                .reg_mut()
-                .CTLR
-                .write(CTLR::ARE_S::SET + CTLR::EnableGrp1S::SET + CTLR::EnableGrp1NS::SET),
-            // dunno why CTLR.EnableGrp1S is set here before but keep it as is.
-        }
-
-        self.wait_ctlr();
 
         Ok(())
     }
@@ -638,6 +628,28 @@ register_bitfields! [
     WAKER [
         ProcessorSleep OFFSET(1) NUMBITS(1) [],
         ChildrenAsleep OFFSET(2) NUMBITS(1) [],
+    ],
+    CTLR_TWO_S [
+        EnableGrp0 OFFSET(0) NUMBITS(1) [],
+        EnableGrp1NS OFFSET(1) NUMBITS(1) [],
+        EnableGrp1S OFFSET(2) NUMBITS(1) [],
+        ARE_S OFFSET(4) NUMBITS(1) [],
+        ARE_NS OFFSET(5) NUMBITS(1) [],
+        DS OFFSET(6) NUMBITS(1) [],
+        RWP OFFSET(31) NUMBITS(1) [],
+    ],
+    CTLR_TWO_NS [
+        EnableGrp1 OFFSET(0) NUMBITS(1) [],
+        EnableGrp1A OFFSET(1) NUMBITS(1) [],
+        ARE_NS OFFSET(4) NUMBITS(1) [],
+        RWP OFFSET(31) NUMBITS(1) [],
+    ],
+    CTLR_ONE_NS [
+        EnableGrp0 OFFSET(0) NUMBITS(1) [],
+        EnableGrp1 OFFSET(1) NUMBITS(1) [],
+        ARE OFFSET(4) NUMBITS(1) [],
+        DS OFFSET(6) NUMBITS(1) [],
+        RWP OFFSET(31) NUMBITS(1) [],
     ],
 ];
 
