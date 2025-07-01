@@ -71,6 +71,8 @@ unsafe impl Send for Gic {}
 impl DriverGeneric for Gic {
     fn open(&mut self) -> Result<(), KError> {
         debug!("GICv3 Distributor open...");
+        self.reg_mut().CTLR.set(0);
+        self.wait_ctlr().unwrap();
         let ctrl = self.reg_mut().CTLR.get();
         debug!("GICv3 Distributor CTLR: {ctrl:#x}");
 
@@ -93,7 +95,7 @@ impl DriverGeneric for Gic {
         self.wait_ctlr().unwrap();
 
         if self.disable_security {
-            self.reg_mut().CTLR.write(CTLR::DS::SET);
+            self.reg_mut().CTLR.modify(CTLR::DS::SET);
         }
 
         for reg in self.reg_mut().IGRPMODR.iter() {
@@ -107,7 +109,7 @@ impl DriverGeneric for Gic {
         for reg in self.reg_mut().ICFGR.iter_mut() {
             reg.set(0x0);
         }
-       
+
         self.wait_ctlr().unwrap();
 
         // ds 不一定允许设为 1, 需要根据厂商实现
@@ -121,11 +123,11 @@ impl DriverGeneric for Gic {
                 self.reg_mut().CTLR.modify(CTLR::ARE_S::SET);
             } else {
                 debug!("GICv3 Distributor disables security, without security extension support.");
-                self.reg_mut()
-                    .CTLR
-                    .modify(CTLR::EnableGrp0::SET 
+                self.reg_mut().CTLR.modify(
+                    CTLR::EnableGrp0::SET
                         // 在没有安全扩展的情况下, grp1是 1 << 1
-                        + CTLR::EnableGrp1NS::SET);
+                        + CTLR::EnableGrp1NS::SET,
+                );
                 self.wait_ctlr().unwrap();
                 self.reg_mut().CTLR.modify(CTLR::ARE_S::SET);
             }
@@ -135,12 +137,10 @@ impl DriverGeneric for Gic {
             }
 
             debug!("GICv3 Distributor is in two security mode with DS=0.");
-            // 根据手册, 要先设grp, 再设 ARE, 否则崩
+
             self.reg_mut()
                 .CTLR
-                .modify(CTLR::EnableGrp1NS::SET);
-            self.wait_ctlr().unwrap();
-            self.reg_mut().CTLR.modify(CTLR::ARE_NS::SET);
+                .modify(CTLR::ARE_S::SET + CTLR::EnableGrp0::SET + CTLR::EnableGrp1NS::SET);
         }
 
         self.wait_ctlr().unwrap();
