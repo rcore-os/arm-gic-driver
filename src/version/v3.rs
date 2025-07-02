@@ -140,7 +140,7 @@ impl DriverGeneric for Gic {
 
             self.reg_mut()
                 .CTLR
-                .modify(CTLR::ARE_NS::SET + CTLR::EnableGrp1NS::SET);
+                .write(CTLR::ARE_NS::SET + CTLR::EnableGrp1NS::SET);
         }
 
         self.wait_ctlr().unwrap();
