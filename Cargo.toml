@@ -8,7 +8,5 @@ resolver = "3"
 [workspace.dependencies]
 any-uart = {version = "0.2"}
 log = "0.4"
-pie-boot = {version = "0.2"}
-qemu-exit = {version = "3"}
-
-
+somehal = "0.3"
+test-base = {path = "itest/test-base"}
