@@ -1,6 +1,5 @@
 mod reg;
 
-use core::ptr::NonNull;
 use log::trace;
 use tock_registers::{LocalRegisterCopy, interfaces::*};
 

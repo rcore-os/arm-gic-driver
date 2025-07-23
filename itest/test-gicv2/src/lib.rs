@@ -14,6 +14,15 @@ static CPU_IF: Mutex<Option<v2::CpuInterface>> = Mutex::new(None);
 #[somehal::entry]
 fn main(_args: &somehal::BootInfo) -> ! {
     test_base::init_test();
+    init_gic();
+    info!("test_systice_irq");
+    test_systice_irq();
+    info!("test_systice_irq done");
+
+    info!("{TEST_SUCCESS}");
+}
+
+fn init_gic() {
     let binding = fdt();
     let gicv2_node = binding
         .find_compatible(&["arm,gic-400", "arm,gic-v2", "arm,cortex-a15-gic"])
@@ -45,8 +54,10 @@ fn main(_args: &somehal::BootInfo) -> ! {
         *GIC.lock() = gic;
         CPU_IF.lock().replace(cpu);
     }
+}
 
-    info!("{TEST_SUCCESS}");
+fn test_systice_irq() {
+    
 }
 
 #[somehal::irq_handler]
