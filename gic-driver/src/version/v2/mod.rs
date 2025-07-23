@@ -13,8 +13,8 @@ use crate::{
 
 /// GICv2 driver. (support GICv1)
 pub struct Gic {
-    gicd: NonNull<DistributorReg>,
-    gicc: NonNull<CpuInterfaceReg>,
+    gicd: *mut DistributorReg,
+    gicc: *mut CpuInterfaceReg,
 }
 
 unsafe impl Send for Gic {}
@@ -27,13 +27,13 @@ impl Gic {
     /// The caller must ensure that the provided pointers are valid and point to the correct GICv2 registers.
     pub const unsafe fn new(gicd: *mut u8, gicc: *mut u8) -> Self {
         Self {
-            gicd: unsafe { NonNull::new_unchecked(gicd as _) },
-            gicc: unsafe { NonNull::new_unchecked(gicc as _) },
+            gicd: gicd as _,
+            gicc: gicc as _,
         }
     }
 
     fn gicd(&self) -> &DistributorReg {
-        unsafe { self.gicd.as_ref() }
+        unsafe { &*self.gicd }
     }
 
     pub fn init_cpu_interface(&self) -> CpuInterface {
@@ -48,7 +48,7 @@ impl Gic {
     /// Initialize the GIC according to GICv2 specification
     /// This includes both Distributor and CPU Interface initialization
     pub fn init(&mut self) {
-        trace!("Initializing GICv2 Distributor...");
+        trace!("Initializing GICv2 Distributor@{:#p}...", self.gicd);
         // 1. Disable the Distributor first
         self.gicd().disable();
 
@@ -272,19 +272,19 @@ impl From<u32> for Ack {
 }
 
 pub struct CpuInterface {
-    gicd: NonNull<DistributorReg>,
-    gicc: NonNull<CpuInterfaceReg>,
+    gicd: *mut DistributorReg,
+    gicc: *mut CpuInterfaceReg,
 }
 
 unsafe impl Send for CpuInterface {}
 
 impl CpuInterface {
     fn gicc(&self) -> &CpuInterfaceReg {
-        unsafe { self.gicc.as_ref() }
+        unsafe { &*self.gicc }
     }
 
     fn gicd(&self) -> &DistributorReg {
-        unsafe { self.gicd.as_ref() }
+        unsafe { &*self.gicd }
     }
 
     fn init(&mut self) {
@@ -320,6 +320,10 @@ impl CpuInterface {
         } else {
             self.gicc().CTLR.modify(GICC_CTLR::EOImodeNS::CLEAR);
         };
+    }
+
+    pub fn eoi_mode_ns(&self) -> bool {
+        self.gicc().CTLR.is_set(GICC_CTLR::EOImodeNS)
     }
 
     /// Acknowledge an interrupt and return the interrupt ID

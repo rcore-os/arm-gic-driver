@@ -11,6 +11,7 @@ hv = ["test-base/hv"]
 arm-gic-driver = {workspace = true}
 log = "0.4"
 test-base = {workspace = true}
+spin = "0.10"
 
 [[test]]
 harness = false
