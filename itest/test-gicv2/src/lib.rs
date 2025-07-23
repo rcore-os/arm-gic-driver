@@ -29,9 +29,10 @@ fn main(_args: &somehal::BootInfo) -> ! {
     let gicc_base = iomap(gicc_base.address as _, gicc_base.size.unwrap_or_default())
         .expect("Failed to map GICC base address");
 
-    let gic = unsafe { v2::Gic::new(gicd_base.as_ptr(), gicc_base.as_ptr()) };
+    let mut gic = unsafe { v2::Gic::new(gicd_base.as_ptr(), gicc_base.as_ptr()) };
 
-    
+    gic.init();
+    debug!("GICv2 initialized successfully");
 
     info!("{TEST_SUCCESS}");
 }

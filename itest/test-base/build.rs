@@ -19,4 +19,3 @@ fn main() {
 fn out_dir() -> PathBuf {
     PathBuf::from(std::env::var("OUT_DIR").unwrap())
 }
-

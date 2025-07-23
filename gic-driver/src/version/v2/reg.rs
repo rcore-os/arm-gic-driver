@@ -1,5 +1,7 @@
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
+use crate::version::set_vector32_bit;
+
 register_structs! {
     #[allow(non_snake_case)]
     pub DistributorReg {
@@ -74,41 +76,6 @@ register_structs! {
 }
 
 impl DistributorReg {
-    /// Initialize the GIC Distributor according to GICv2 specification
-    pub fn init(&self) {
-        // 1. Disable the Distributor first
-        self.disable();
-
-        // 2. Get the number of interrupt lines supported
-        let typer = self.TYPER.get();
-        let it_lines_number = typer & 0x1F; // ITLinesNumber field
-        let max_spi = (it_lines_number + 1) * 32;
-
-        // 3. Disable all interrupts first
-        self.disable_all_interrupts(max_spi);
-
-        // 4. Clear all pending interrupts
-        self.clear_all_pending_interrupts(max_spi);
-
-        // 5. Clear all active interrupts
-        self.clear_all_active_interrupts(max_spi);
-
-        // 6. Configure all interrupts as Group 1 (Non-secure) by default
-        self.configure_interrupt_groups(max_spi);
-
-        // 7. Set default priority for all interrupts
-        self.set_default_priorities(max_spi);
-
-        // 8. Configure interrupt targets (for SPIs)
-        self.configure_interrupt_targets(max_spi);
-
-        // 9. Configure interrupt configuration (edge/level trigger)
-        self.configure_interrupt_config(max_spi);
-
-        // 10. Enable the Distributor
-        self.enable();
-    }
-
     /// Disable the GIC Distributor
     pub fn disable(&self) {
         self.CTLR
@@ -122,7 +89,7 @@ impl DistributorReg {
     }
 
     /// Disable all interrupts
-    fn disable_all_interrupts(&self, max_interrupts: u32) {
+    pub fn disable_all_interrupts(&self, max_interrupts: u32) {
         // Calculate number of ICENABLER registers needed
         let num_regs = max_interrupts.div_ceil(32) as usize;
         let num_regs = num_regs.min(self.ICENABLER.len());
@@ -133,7 +100,7 @@ impl DistributorReg {
     }
 
     /// Clear all pending interrupts
-    fn clear_all_pending_interrupts(&self, max_interrupts: u32) {
+    pub fn clear_all_pending_interrupts(&self, max_interrupts: u32) {
         // Calculate number of ICPENDR registers needed
         let num_regs = max_interrupts.div_ceil(32) as usize;
         let num_regs = num_regs.min(self.ICPENDR.len());
@@ -144,7 +111,7 @@ impl DistributorReg {
     }
 
     /// Clear all active interrupts
-    fn clear_all_active_interrupts(&self, max_interrupts: u32) {
+    pub fn clear_all_active_interrupts(&self, max_interrupts: u32) {
         // Calculate number of ICACTIVER registers needed
         let num_regs = max_interrupts.div_ceil(32) as usize;
         let num_regs = num_regs.min(self.ICACTIVER.len());
@@ -155,7 +122,7 @@ impl DistributorReg {
     }
 
     /// Configure interrupt groups - set all interrupts to Group 1 (Non-secure) by default
-    fn configure_interrupt_groups(&self, max_interrupts: u32) {
+    pub fn configure_interrupt_groups(&self, max_interrupts: u32) {
         // Calculate number of IGROUPR registers needed
         let num_regs = max_interrupts.div_ceil(32) as usize;
         let num_regs = num_regs.min(self.IGROUPR.len());
@@ -167,7 +134,7 @@ impl DistributorReg {
     }
 
     /// Set default priorities for all interrupts
-    fn set_default_priorities(&self, max_interrupts: u32) {
+    pub fn set_default_priorities(&self, max_interrupts: u32) {
         // Calculate number of priority registers needed (4 interrupts per register)
         let num_regs = max_interrupts.div_ceil(4) as usize;
         let num_regs = num_regs.min(self.IPRIORITYR.len());
@@ -179,7 +146,7 @@ impl DistributorReg {
     }
 
     /// Configure interrupt targets for SPIs (Shared Peripheral Interrupts)
-    fn configure_interrupt_targets(&self, max_interrupts: u32) {
+    pub fn configure_interrupt_targets(&self, max_interrupts: u32) {
         // SGIs (0-15) and PPIs (16-31) don't use ITARGETSR
         // Only SPIs (32+) need target configuration
         if max_interrupts <= 32 {
@@ -200,7 +167,7 @@ impl DistributorReg {
     }
 
     /// Configure interrupt configuration (edge/level triggered)
-    fn configure_interrupt_config(&self, max_interrupts: u32) {
+    pub fn configure_interrupt_config(&self, max_interrupts: u32) {
         // Calculate number of ICFGR registers needed (16 interrupts per register)
         let num_regs = max_interrupts.div_ceil(16) as usize;
         let num_regs = num_regs.min(self.ICFGR.len());
@@ -214,30 +181,12 @@ impl DistributorReg {
 
     /// Enable a specific interrupt
     pub fn enable_interrupt(&self, interrupt_id: u32) {
-        if interrupt_id >= 1020 {
-            return; // Invalid interrupt ID
-        }
-
-        let reg_idx = (interrupt_id / 32) as usize;
-        let bit_idx = interrupt_id % 32;
-
-        if reg_idx < self.ISENABLER.len() {
-            self.ISENABLER[reg_idx].set(1 << bit_idx);
-        }
+        set_vector32_bit(&self.ISENABLER, interrupt_id);
     }
 
     /// Disable a specific interrupt
     pub fn disable_interrupt(&self, interrupt_id: u32) {
-        if interrupt_id >= 1020 {
-            return; // Invalid interrupt ID
-        }
-
-        let reg_idx = (interrupt_id / 32) as usize;
-        let bit_idx = interrupt_id % 32;
-
-        if reg_idx < self.ICENABLER.len() {
-            self.ICENABLER[reg_idx].set(1 << bit_idx);
-        }
+        set_vector32_bit(&self.ICENABLER, interrupt_id);
     }
 
     /// Set interrupt priority
@@ -284,17 +233,9 @@ impl DistributorReg {
         }
     }
 
-    /// Trigger a Software Generated Interrupt (SGI)
-    pub fn send_sgi(&self, sgi_id: u32, target_list: u8, filter: u32) {
-        if sgi_id >= 16 {
-            return; // Invalid SGI ID
-        }
-
-        self.SGIR.write(
-            SGIR::SGIINTID.val(sgi_id)
-                + SGIR::CPUTargetList.val(target_list as u32)
-                + SGIR::TargetListFilter.val(filter),
-        );
+    pub fn max_spi_num(&self) -> u32 {
+        let it_lines_number = self.TYPER.read(TYPER::ITLinesNumber); // ITLinesNumber field
+        (it_lines_number + 1) * 32
     }
 }
 

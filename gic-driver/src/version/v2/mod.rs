@@ -1,9 +1,13 @@
 mod reg;
 
 use core::ptr::NonNull;
+use log::trace;
+use rdif_intc::CpuId;
 use tock_registers::interfaces::*;
 
 use reg::*;
+
+use crate::IntId;
 
 /// GICv2 driver. (support GICv1)
 pub struct Gic {
@@ -31,28 +35,55 @@ impl Gic {
     }
 
     pub fn init_cpu_interface(&self) -> CpuInterface {
-        let mut c = CpuInterface {
-            gicc: self.gicc,
-        };
+        let mut c = CpuInterface { gicc: self.gicc };
         c.init();
         c
     }
 
     /// Initialize the GIC according to GICv2 specification
     /// This includes both Distributor and CPU Interface initialization
-    pub fn init(&self) {
-        // Initialize the Distributor
-        self.gicd().init();
+    pub fn init(&mut self) {
+        trace!("Initializing GICv2 Distributor...");
+        // 1. Disable the Distributor first
+        self.gicd().disable();
+
+        // 2. Get the number of interrupt lines supported
+        let max_spi = self.gicd().max_spi_num();
+
+        // 3. Disable all interrupts first
+        self.gicd().disable_all_interrupts(max_spi);
+
+        // 4. Clear all pending interrupts
+        self.gicd().clear_all_pending_interrupts(max_spi);
+
+        // 5. Clear all active interrupts
+        self.gicd().clear_all_active_interrupts(max_spi);
+
+        // 6. Configure all interrupts as Group 1 (Non-secure) by default
+        self.gicd().configure_interrupt_groups(max_spi);
+        trace!("[GICv2] Configure all interrupts as Group 1 (Non-secure) by default");
+
+        // 7. Set default priority for all interrupts
+        self.gicd().set_default_priorities(max_spi);
+
+        // 8. Configure interrupt targets (for SPIs)
+        self.gicd().configure_interrupt_targets(max_spi);
+        trace!("[GICv2] Configure all SPIs to target cpu 0");
+        // 9. Configure interrupt configuration (edge/level trigger)
+        self.gicd().configure_interrupt_config(max_spi);
+
+        // 10. Enable the Distributor
+        self.gicd().enable();
     }
-    
+
     /// Enable a specific interrupt
-    pub fn enable_interrupt(&self, interrupt_id: u32) {
-        self.gicd().enable_interrupt(interrupt_id);
+    pub fn enable_interrupt(&self, id: IntId) {
+        self.gicd().enable_interrupt(id.into());
     }
 
     /// Disable a specific interrupt
-    pub fn disable_interrupt(&self, interrupt_id: u32) {
-        self.gicd().disable_interrupt(interrupt_id);
+    pub fn disable_interrupt(&self, id: IntId) {
+        self.gicd().disable_interrupt(id.into());
     }
 
     /// Set interrupt priority (0 = highest priority, 255 = lowest priority)
@@ -62,7 +93,8 @@ impl Gic {
 
     /// Set interrupt target CPU for SPIs (bit mask, bit 0 = CPU 0, etc.)
     pub fn set_interrupt_target(&self, interrupt_id: u32, target_cpu_mask: u8) {
-        self.gicd().set_interrupt_target(interrupt_id, target_cpu_mask);
+        self.gicd()
+            .set_interrupt_target(interrupt_id, target_cpu_mask);
     }
 
     /// Configure interrupt as Group 0 (Secure) or Group 1 (Non-secure)
@@ -71,20 +103,47 @@ impl Gic {
     }
 
     /// Send a Software Generated Interrupt (SGI) to target CPUs
-    /// 
+    ///
     /// # Arguments
     /// * `sgi_id` - SGI interrupt ID (0-15)
-    /// * `target_list` - Target CPU list (bit mask)
-    /// * `filter` - Target list filter:
-    ///   - 0: Forward to CPUs listed in target_list
-    ///   - 1: Forward to all CPUs except requesting CPU
-    ///   - 2: Forward only to requesting CPU
-    pub fn send_sgi(&self, sgi_id: u32, target_list: u8, filter: u32) {
-        self.gicd().send_sgi(sgi_id, target_list, filter);
+    /// * `target` - Target CPUs for the SGI
+    pub fn send_sgi(&self, sgi_id: u32, target: SGITarget) {
+        assert!(sgi_id < 16, "Invalid SGI ID: {sgi_id}");
+        let (filter, target_list) = match target {
+            SGITarget::TargetList(list) => (SGIR::TargetListFilter::TargetList, list as u32),
+            SGITarget::AllOther => (SGIR::TargetListFilter::AllOther, 0),
+            SGITarget::Current => (SGIR::TargetListFilter::Current, 0),
+        };
+
+        self.gicd()
+            .SGIR
+            .write(SGIR::SGIINTID.val(sgi_id) + SGIR::CPUTargetList.val(target_list) + filter);
     }
 }
 
-pub struct CpuInterface{
+#[derive(Debug, Clone, Copy)]
+pub enum SGITarget {
+    /// Forward to CPUs listed in CPUTargetList (cpu mask)
+    TargetList(u8),
+    /// Forward to all CPUs except the requesting CPU
+    AllOther,
+    /// Forward only to the requesting CPU
+    Current,
+}
+
+impl SGITarget {
+    /// Create a new SGITarget with a specific CPU target list. list is Cpu interface IDs.
+    pub fn new_target_list(list: impl Iterator<Item = usize>) -> Self {
+        let mut raw = 0;
+        for cpu in list {
+            assert!(cpu < 8, "Invalid CPU Interface: {cpu}");
+            raw |= 1 << cpu; // Set bit for each target CPU
+        }
+        Self::TargetList(raw)
+    }
+}
+
+pub struct CpuInterface {
     gicc: NonNull<CpuInterfaceReg>,
 }
 
@@ -95,34 +154,34 @@ impl CpuInterface {
 
     fn init(&mut self) {
         let gicc = self.gicc();
-      
+
         // 1. Disable CPU interface first
         gicc.CTLR.set(0);
-        
+
         // 2. Set priority mask to allow all interrupts (lowest priority)
         gicc.PMR.write(PMR::Priority.val(0xFF));
-        
+
         // 3. Set binary point to default value (no preemption)
         gicc.BPR.write(BPR::BinaryPoint.val(0x2));
-        
+
         // 4. Set aliased binary point for Group 1 interrupts
         gicc.ABPR.write(ABPR::BinaryPoint.val(0x3));
-        
+
         // 5. Enable CPU interface for both Group 0 and Group 1 interrupts
         gicc.CTLR.write(
-            GICC_CTLR::EnableGrp0::SET + 
+            GICC_CTLR::EnableGrp0::SET +
             GICC_CTLR::EnableGrp1::SET +
             GICC_CTLR::FIQEn::CLEAR +      // Use IRQ for Group 0 interrupts
-            GICC_CTLR::AckCtl::CLEAR       // Separate acknowledge for groups
+            GICC_CTLR::AckCtl::CLEAR, // Separate acknowledge for groups
         );
     }
-    
+
     /// Acknowledge an interrupt and return the interrupt ID
     /// Returns the interrupt ID and source CPU ID (for SGIs)
     pub fn acknowledge_interrupt(&self) -> (u32, u32) {
         let iar = self.gicc().IAR.get();
-        let interrupt_id = iar & 0x3FF;  // Bits [9:0]
-        let cpu_id = (iar >> 10) & 0x7;  // Bits [12:10]
+        let interrupt_id = iar & 0x3FF; // Bits [9:0]
+        let cpu_id = (iar >> 10) & 0x7; // Bits [12:10]
         (interrupt_id, cpu_id)
     }
 
@@ -135,7 +194,7 @@ impl CpuInterface {
     /// Get the highest priority pending interrupt ID
     pub fn get_highest_priority_pending(&self) -> u32 {
         let hppir = self.gicc().HPPIR.get();
-        hppir & 0x3FF  // Bits [9:0]
+        hppir & 0x3FF // Bits [9:0]
     }
 
     /// Get the current running priority

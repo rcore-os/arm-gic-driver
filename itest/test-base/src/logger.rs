@@ -19,4 +19,3 @@ pub fn init_log() {
     log::set_logger(&Logger).unwrap();
     log::set_max_level(log::LevelFilter::Trace);
 }
-

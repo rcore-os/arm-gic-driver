@@ -1,4 +1,7 @@
-use core::error::Error;
+use core::{
+    error::Error,
+    ops::{Index},
+};
 
 use alloc::boxed::Box;
 use rdif_intc::*;
@@ -9,6 +12,16 @@ pub mod v2;
 pub mod v3;
 
 use crate::define::*;
+
+fn set_vector32_bit<V, T>(vec: &V, index: u32)
+where
+    T: Writeable<T = u32>,
+    V: Index<usize, Output = T>,
+{
+    let reg_idx = index / 32;
+    let bit_idx = index % 32;
+    vec[reg_idx as usize].set(1 << bit_idx);
+}
 
 register_structs! {
     #[allow(non_snake_case)]
