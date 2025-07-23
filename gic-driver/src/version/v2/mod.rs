@@ -2,7 +2,7 @@ mod reg;
 
 use core::ptr::NonNull;
 use log::trace;
-use tock_registers::interfaces::*;
+use tock_registers::{LocalRegisterCopy, interfaces::*};
 
 use reg::*;
 
@@ -246,6 +246,31 @@ pub enum Ack {
     SGI { intid: IntId, cpu_id: usize },
 }
 
+impl From<Ack> for u32 {
+    fn from(ack: Ack) -> Self {
+        match ack {
+            Ack::Normal(intid) => IAR::InterruptID.val(intid.to_u32()),
+            Ack::SGI { intid, cpu_id } => {
+                IAR::InterruptID.val(intid.to_u32()) + IAR::CPUID.val(cpu_id as u32)
+            }
+        }
+        .value
+    }
+}
+
+impl From<u32> for Ack {
+    fn from(value: u32) -> Self {
+        let reg = LocalRegisterCopy::<u32, IAR::Register>::new(value);
+        let intid = unsafe { IntId::raw(reg.read(IAR::InterruptID)) };
+        if intid.is_sgi() {
+            let cpu_id = reg.read(IAR::CPUID) as usize;
+            Ack::SGI { intid, cpu_id }
+        } else {
+            Ack::Normal(intid)
+        }
+    }
+}
+
 pub struct CpuInterface {
     gicd: NonNull<DistributorReg>,
     gicc: NonNull<CpuInterfaceReg>,
@@ -305,14 +330,7 @@ impl CpuInterface {
         if id == 1023 {
             return None;
         }
-        let intid = unsafe { IntId::raw(id) };
-
-        if intid.is_sgi() {
-            let cpu_id = data.read(IAR::CPUID) as usize;
-            Some(Ack::SGI { intid, cpu_id })
-        } else {
-            Some(Ack::Normal(intid))
-        }
+        Some(data.get().into())
     }
 
     /// Signal end of interrupt processing
