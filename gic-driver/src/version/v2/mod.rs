@@ -37,7 +37,10 @@ impl Gic {
     }
 
     pub fn init_cpu_interface(&self) -> CpuInterface {
-        let mut c = CpuInterface { gicc: self.gicc };
+        let mut c = CpuInterface {
+            gicd: self.gicd,
+            gicc: self.gicc,
+        };
         c.init();
         c
     }
@@ -180,14 +183,26 @@ impl SGITarget {
         Self::TargetList(val)
     }
 }
+#[derive(Debug, Clone, Copy)]
+pub enum Ack {
+    Normal(IntId),
+    SGI { intid: IntId, cpu_id: usize },
+}
 
 pub struct CpuInterface {
+    gicd: NonNull<DistributorReg>,
     gicc: NonNull<CpuInterfaceReg>,
 }
+
+unsafe impl Send for CpuInterface {}
 
 impl CpuInterface {
     fn gicc(&self) -> &CpuInterfaceReg {
         unsafe { self.gicc.as_ref() }
+    }
+
+    fn gicd(&self) -> &DistributorReg {
+        unsafe { self.gicd.as_ref() }
     }
 
     fn init(&mut self) {
@@ -213,20 +228,50 @@ impl CpuInterface {
             GICC_CTLR::AckCtl::CLEAR, // Separate acknowledge for groups
         );
     }
+    /// Set the EOI mode for non-secure interrupts
+    ///
+    /// - `false` GICC_EOIR has both priority drop and deactivate interrupt functionality. Accesses to the GICC_DIR are UNPREDICTABLE.
+    /// - `true`  GICC_EOIR has priority drop functionality only. GICC_DIR has deactivate interrupt functionality.
+    pub fn set_eoi_mode_ns(&self, is_two_step: bool) {
+        if is_two_step {
+            self.gicc().CTLR.modify(GICC_CTLR::EOImodeNS::SET);
+        } else {
+            self.gicc().CTLR.modify(GICC_CTLR::EOImodeNS::CLEAR);
+        };
+    }
 
     /// Acknowledge an interrupt and return the interrupt ID
     /// Returns the interrupt ID and source CPU ID (for SGIs)
-    pub fn acknowledge_interrupt(&self) -> (u32, u32) {
-        let iar = self.gicc().IAR.get();
-        let interrupt_id = iar & 0x3FF; // Bits [9:0]
-        let cpu_id = (iar >> 10) & 0x7; // Bits [12:10]
-        (interrupt_id, cpu_id)
+    pub fn ack(&self) -> Option<Ack> {
+        let data = self.gicc().IAR.extract();
+        let id = data.read(IAR::InterruptID);
+        if id == 1023 {
+            return None;
+        }
+        let intid = unsafe { IntId::raw(id) };
+
+        if intid.is_sgi() {
+            let cpu_id = data.read(IAR::CPUID) as usize;
+            Some(Ack::SGI { intid, cpu_id })
+        } else {
+            Some(Ack::Normal(intid))
+        }
     }
 
     /// Signal end of interrupt processing
-    pub fn end_of_interrupt(&self, interrupt_id: u32, cpu_id: u32) {
-        let eoir_val = interrupt_id | (cpu_id << 10);
-        self.gicc().EOIR.set(eoir_val);
+    pub fn eoi(&self, ack: Ack) {
+        let val = match ack {
+            Ack::Normal(intid) => EOIR::EOIINTID.val(intid.to_u32()),
+            Ack::SGI { intid, cpu_id } => {
+                EOIR::EOIINTID.val(intid.to_u32()) + EOIR::CPUID.val(cpu_id as u32)
+            }
+        };
+        self.gicc().EOIR.write(val);
+    }
+
+    /// Deactivate an interrupt
+    pub fn dir(&self, intid: IntId) {
+        self.gicc().DIR.set(intid.to_u32());
     }
 
     /// Get the highest priority pending interrupt ID
@@ -243,5 +288,39 @@ impl CpuInterface {
     /// Set the priority mask (interrupts with priority >= mask will be masked)
     pub fn set_priority_mask(&self, mask: u8) {
         self.gicc().PMR.write(PMR::Priority.val(mask as u32));
+    }
+
+    /// Disable a specific interrupt
+    pub fn irq_disable(&self, id: IntId) {
+        assert!(
+            id.is_private(),
+            "Cannot disable non-private interrupt: {id:?}"
+        );
+        self.gicd().ICENABLER.set_irq_bit(id.into());
+    }
+
+    pub fn irq_is_enabled(&self, id: IntId) -> bool {
+        assert!(
+            id.is_private(),
+            "Cannot check non-private interrupt: {id:?}"
+        );
+        self.gicd().ISENABLER.get_irq_bit(id.into())
+    }
+
+    /// Set interrupt priority (0 = highest priority, 255 = lowest priority)
+    pub fn set_priority(&self, id: IntId, priority: u8) {
+        assert!(
+            id.is_private(),
+            "Cannot set priority for non-private interrupt: {id:?}"
+        );
+        self.gicd().IPRIORITYR[id.to_u32() as usize].set(priority);
+    }
+
+    pub fn get_priority(&self, id: IntId) -> u8 {
+        assert!(
+            id.is_private(),
+            "Cannot get priority for non-private interrupt: {id:?}"
+        );
+        self.gicd().IPRIORITYR[id.to_u32() as usize].get()
     }
 }

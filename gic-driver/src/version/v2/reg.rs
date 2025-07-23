@@ -1,7 +1,5 @@
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
-use crate::version::IrqVecWriteable;
-
 register_structs! {
     #[allow(non_snake_case)]
     pub DistributorReg {
@@ -176,50 +174,6 @@ impl DistributorReg {
         // SGIs are always edge-triggered, but we can set the bits anyway
         for i in 0..num_regs {
             self.ICFGR[i].set(0);
-        }
-    }
-
-    /// Set interrupt priority
-    pub fn set_interrupt_priority(&self, interrupt_id: u32, priority: u8) {
-        if interrupt_id >= 1020 {
-            return; // Invalid interrupt ID
-        }
-
-        let reg_idx = (interrupt_id / 4) as usize;
-
-        if reg_idx < self.IPRIORITYR.len() {
-            self.IPRIORITYR[reg_idx].set(priority);
-        }
-    }
-
-    /// Set interrupt target CPU for SPIs
-    pub fn set_interrupt_target(&self, interrupt_id: u32, target_cpu: u8) {
-        if !(32..1020).contains(&interrupt_id) {
-            return; // Invalid interrupt ID for target setting
-        }
-
-        let reg_idx = (interrupt_id / 4) as usize;
-
-        if reg_idx < self.ITARGETSR.len() {
-            self.ITARGETSR[reg_idx].set(target_cpu);
-        }
-    }
-
-    /// Configure interrupt as Group 0 (Secure) or Group 1 (Non-secure)
-    pub fn set_interrupt_group(&self, interrupt_id: u32, group1: bool) {
-        if interrupt_id >= 1020 {
-            return; // Invalid interrupt ID
-        }
-
-        let reg_idx = (interrupt_id / 32) as usize;
-        let bit_idx = interrupt_id % 32;
-
-        if reg_idx < self.IGROUPR.len() {
-            if group1 {
-                self.IGROUPR[reg_idx].set(self.IGROUPR[reg_idx].get() | (1 << bit_idx));
-            } else {
-                self.IGROUPR[reg_idx].set(self.IGROUPR[reg_idx].get() & !(1 << bit_idx));
-            }
         }
     }
 
