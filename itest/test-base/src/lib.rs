@@ -9,10 +9,10 @@ use log::info;
 pub use somehal;
 use somehal::{boot_info, mem::phys_to_virt};
 
-use crate::debug::init_log;
+use crate::logger::init_log;
 
-mod debug;
 pub mod lang_items;
+mod logger;
 mod mem;
 
 pub const TEST_SUCCESS: &str = "All tests passed!";
