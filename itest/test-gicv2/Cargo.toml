@@ -1,0 +1,16 @@
+[package]
+edition = "2024"
+name = "test-gicv2"
+version = "0.1.0"
+publish = false
+
+[features]
+hv = ["test-base/hv"]
+
+[dependencies]
+log = "0.4"
+test-base = {workspace = true}
+
+[[test]]
+harness = false
+name = "test"
