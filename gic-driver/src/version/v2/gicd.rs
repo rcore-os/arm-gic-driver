@@ -87,7 +87,7 @@ impl DistributorReg {
     }
 
     /// Disable all interrupts
-    pub fn disable_all_interrupts(&self, max_interrupts: u32) {
+    pub fn irq_disable_all(&self, max_interrupts: u32) {
         // Calculate number of ICENABLER registers needed
         let num_regs = max_interrupts.div_ceil(32) as usize;
         let num_regs = num_regs.min(self.ICENABLER.len());
@@ -98,7 +98,7 @@ impl DistributorReg {
     }
 
     /// Clear all pending interrupts
-    pub fn clear_all_pending_interrupts(&self, max_interrupts: u32) {
+    pub(crate) fn pending_clear_all(&self, max_interrupts: u32) {
         // Calculate number of ICPENDR registers needed
         let num_regs = max_interrupts.div_ceil(32) as usize;
         let num_regs = num_regs.min(self.ICPENDR.len());
@@ -109,7 +109,7 @@ impl DistributorReg {
     }
 
     /// Clear all active interrupts
-    pub fn clear_all_active_interrupts(&self, max_interrupts: u32) {
+    pub(crate) fn active_clear_all(&self, max_interrupts: u32) {
         // Calculate number of ICACTIVER registers needed
         let num_regs = max_interrupts.div_ceil(32) as usize;
         let num_regs = num_regs.min(self.ICACTIVER.len());
@@ -120,7 +120,7 @@ impl DistributorReg {
     }
 
     /// Configure interrupt groups - set all interrupts to Group 0 by default
-    pub fn configure_interrupt_groups(&self, max_interrupts: u32) {
+    pub(crate) fn groups_all_to_0(&self, max_interrupts: u32) {
         // Calculate number of IGROUPR registers needed
         let num_regs = max_interrupts.div_ceil(32) as usize;
         let num_regs = num_regs.min(self.IGROUPR.len());
@@ -131,7 +131,7 @@ impl DistributorReg {
     }
 
     /// Set default priorities for all interrupts
-    pub fn set_default_priorities(&self, max_interrupts: u32) {
+    pub(crate) fn set_default_priorities(&self, max_interrupts: u32) {
         // Calculate number of priority registers needed (4 interrupts per register)
         let num_regs = max_interrupts.div_ceil(4) as usize;
         let num_regs = num_regs.min(self.IPRIORITYR.len());
@@ -143,7 +143,7 @@ impl DistributorReg {
     }
 
     /// Configure interrupt targets for SPIs (Shared Peripheral Interrupts)
-    pub fn configure_interrupt_targets(&self, max_interrupts: u32) {
+    pub(crate) fn configure_interrupt_targets(&self, max_interrupts: u32) {
         // SGIs (0-15) and PPIs (16-31) don't use ITARGETSR
         // Only SPIs (32+) need target configuration
         if max_interrupts <= 32 {
@@ -164,7 +164,7 @@ impl DistributorReg {
     }
 
     /// Configure interrupt configuration (edge/level triggered)
-    pub fn configure_interrupt_config(&self, max_interrupts: u32) {
+    pub(crate) fn configure_interrupt_config(&self, max_interrupts: u32) {
         // Calculate number of ICFGR registers needed (16 interrupts per register)
         let num_regs = max_interrupts.div_ceil(16) as usize;
         let num_regs = num_regs.min(self.ICFGR.len());
@@ -242,109 +242,5 @@ register_bitfields! [
     pub PIDR2 [
         /// Architecture revision
         ArchRev OFFSET(4) NUMBITS(4) [],
-    ],
-
-    /// CPU Interface Control Register
-    pub GICC_CTLR [
-        /// Enable Group 0 interrupts
-        EnableGrp0 OFFSET(0) NUMBITS(1) [],
-        /// Enable Group 1 interrupts
-        EnableGrp1 OFFSET(1) NUMBITS(1) [],
-        /// Acknowledge control for Group 1 interrupts
-        AckCtl OFFSET(2) NUMBITS(1) [],
-        /// FIQ enable for Group 0 interrupts
-        FIQEn OFFSET(3) NUMBITS(1) [],
-        /// Common binary point register
-        CBPR OFFSET(4) NUMBITS(1) [],
-        /// FIQ bypass disable for Group 0
-        FIQBypDisGrp0 OFFSET(5) NUMBITS(1) [],
-        /// IRQ bypass disable for Group 0
-        IRQBypDisGrp0 OFFSET(6) NUMBITS(1) [],
-        /// FIQ bypass disable for Group 1
-        FIQBypDisGrp1 OFFSET(7) NUMBITS(1) [],
-        /// IRQ bypass disable for Group 1
-        IRQBypDisGrp1 OFFSET(8) NUMBITS(1) [],
-        /// EOI mode for Non-secure state
-        EOImodeNS OFFSET(9) NUMBITS(1) [],
-    ],
-
-    /// Interrupt Acknowledge Register
-    pub IAR [
-        /// Interrupt ID
-        InterruptID OFFSET(0) NUMBITS(10) [],
-        /// CPU ID (for SGIs)
-        CPUID OFFSET(10) NUMBITS(3) [],
-    ],
-
-    /// Priority Mask Register
-    pub PMR [
-        /// Priority
-        Priority OFFSET(0) NUMBITS(8) [],
-    ],
-
-    /// Binary Point Register
-    pub BPR [
-        /// Binary point
-        BinaryPoint OFFSET(0) NUMBITS(3) [],
-    ],
-
-    /// Running Priority Register
-    pub RPR [
-        /// Priority
-        Priority OFFSET(0) NUMBITS(8) [],
-    ],
-
-    /// Highest Priority Pending Interrupt Register
-    pub HPPIR [
-        /// Pending interrupt ID
-        PENDINTID OFFSET(0) NUMBITS(10) [],
-        /// CPU ID (for SGIs)
-        CPUID OFFSET(10) NUMBITS(3) [],
-    ],
-
-    /// Aliased Binary Point Register
-    pub ABPR [
-        /// Binary point
-        BinaryPoint OFFSET(0) NUMBITS(3) [],
-    ],
-
-    /// Aliased Interrupt Acknowledge Register
-    pub AIAR [
-        /// Interrupt ID
-        InterruptID OFFSET(0) NUMBITS(10) [],
-        /// CPU ID (for SGIs)
-        CPUID OFFSET(10) NUMBITS(3) [],
-    ],
-
-    /// Aliased End of Interrupt Register
-    pub AEOIR [
-        /// End of interrupt ID
-        EOIINTID OFFSET(0) NUMBITS(10) [],
-        /// CPU ID (for SGIs)
-        CPUID OFFSET(10) NUMBITS(3) [],
-    ],
-
-    /// Aliased Highest Priority Pending Interrupt Register
-    pub AHPPIR [
-        /// Pending interrupt ID
-        PENDINTID OFFSET(0) NUMBITS(10) [],
-        /// CPU ID (for SGIs)
-        CPUID OFFSET(10) NUMBITS(3) [],
-    ],
-
-    /// End of Interrupt Register
-    pub EOIR [
-        /// End of interrupt ID
-        EOIINTID OFFSET(0) NUMBITS(10) [],
-        /// CPU ID (for SGIs)
-        CPUID OFFSET(10) NUMBITS(3) [],
-    ],
-
-    /// Deactivate Interrupt Register
-    pub DIR [
-        /// Interrupt ID
-        InterruptID OFFSET(0) NUMBITS(10) [],
-        /// CPU ID (for SGIs)
-        CPUID OFFSET(10) NUMBITS(3) [],
     ],
 ];

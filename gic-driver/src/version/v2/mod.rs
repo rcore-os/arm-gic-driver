@@ -7,7 +7,7 @@ mod gich;
 
 use gicc::CpuInterfaceReg;
 use gicd::DistributorReg;
-use gich::*;
+// use gich::HypervisorRegs;
 
 use crate::{
     IntId,
@@ -59,16 +59,16 @@ impl Gic {
         let max_spi = self.gicd().max_spi_num();
 
         // 3. Disable all interrupts first
-        self.gicd().disable_all_interrupts(max_spi);
+        self.gicd().irq_disable_all(max_spi);
 
         // 4. Clear all pending interrupts
-        self.gicd().clear_all_pending_interrupts(max_spi);
+        self.gicd().pending_clear_all(max_spi);
 
         // 5. Clear all active interrupts
-        self.gicd().clear_all_active_interrupts(max_spi);
+        self.gicd().active_clear_all(max_spi);
 
         // 6. Configure all interrupts as Group 1 (Non-secure) by default
-        self.gicd().configure_interrupt_groups(max_spi);
+        self.gicd().groups_all_to_0(max_spi);
         trace!("[GICv2] Configure all interrupts as Group 1 (Non-secure) by default");
 
         // 7. Set default priority for all interrupts
@@ -467,3 +467,9 @@ impl CpuInterface {
         self.gicd().ISPENDR.get_irq_bit(id.into())
     }
 }
+
+// pub struct HypervisorInterface {
+//     base: *mut HypervisorRegs,
+// }
+
+// unsafe impl Send for HypervisorInterface {}
