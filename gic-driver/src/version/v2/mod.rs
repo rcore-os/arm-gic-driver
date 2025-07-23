@@ -97,11 +97,21 @@ impl Gic {
 
     /// Set interrupt priority (0 = highest priority, 255 = lowest priority)
     pub fn set_priority(&self, id: IntId, priority: u8) {
-        self.gicd().IPRIORITYR[id.to_u32() as usize].set(priority);
+        let index = id.to_u32() as usize;
+        assert!(
+            index < self.gicd().IPRIORITYR.len(),
+            "Invalid interrupt ID for priority: {id:?}"
+        );
+        self.gicd().IPRIORITYR[index].set(priority);
     }
 
     pub fn get_priority(&self, id: IntId) -> u8 {
-        self.gicd().IPRIORITYR[id.to_u32() as usize].get()
+        let index = id.to_u32() as usize;
+        assert!(
+            index < self.gicd().IPRIORITYR.len(),
+            "Invalid interrupt ID for priority: {id:?}"
+        );
+        self.gicd().IPRIORITYR[index].get()
     }
 
     /// Set interrupt target CPU for SPIs
@@ -110,7 +120,12 @@ impl Gic {
             !id.is_private(),
             "Cannot set target CPU for private interrupt: {id:?}"
         );
-        self.gicd().ITARGETSR[id.to_u32() as usize].set(target_list.as_u8());
+        let index = id.to_u32() as usize;
+        assert!(
+            index < self.gicd().ITARGETSR.len(),
+            "Invalid interrupt ID for target: {id:?}"
+        );
+        self.gicd().ITARGETSR[index].set(target_list.as_u8());
     }
 
     pub fn get_target_cpu(&self, id: IntId) -> TargetList {
@@ -118,7 +133,12 @@ impl Gic {
             !id.is_private(),
             "Cannot get target CPU for private interrupt: {id:?}"
         );
-        TargetList(self.gicd().ITARGETSR[id.to_u32() as usize].get())
+        let index = id.to_u32() as usize;
+        assert!(
+            index < self.gicd().ITARGETSR.len(),
+            "Invalid interrupt ID for target: {id:?}"
+        );
+        TargetList(self.gicd().ITARGETSR[index].get())
     }
 
     /// Configure interrupt as Group 0 (Secure) or Group 1 (Non-secure)
@@ -307,8 +327,14 @@ impl CpuInterface {
     }
 
     /// Deactivate an interrupt
-    pub fn dir(&self, intid: IntId) {
-        self.gicc().DIR.set(intid.to_u32());
+    pub fn dir(&self, ack: Ack) {
+        let val = match ack {
+            Ack::Normal(intid) => DIR::InterruptID.val(intid.to_u32()),
+            Ack::SGI { intid, cpu_id } => {
+                DIR::InterruptID.val(intid.to_u32()) + DIR::CPUID.val(cpu_id as u32)
+            }
+        };
+        self.gicc().DIR.write(val);
     }
 
     /// Get the highest priority pending interrupt ID
@@ -325,6 +351,15 @@ impl CpuInterface {
     /// Set the priority mask (interrupts with priority >= mask will be masked)
     pub fn set_priority_mask(&self, mask: u8) {
         self.gicc().PMR.write(PMR::Priority.val(mask as u32));
+    }
+
+    /// Enable a specific interrupt
+    pub fn irq_enable(&self, id: IntId) {
+        assert!(
+            id.is_private(),
+            "Cannot enable non-private interrupt: {id:?}"
+        );
+        self.gicd().ISENABLER.set_irq_bit(id.into());
     }
 
     /// Disable a specific interrupt
@@ -350,7 +385,12 @@ impl CpuInterface {
             id.is_private(),
             "Cannot set priority for non-private interrupt: {id:?}"
         );
-        self.gicd().IPRIORITYR[id.to_u32() as usize].set(priority);
+        let index = id.to_u32() as usize;
+        assert!(
+            index < self.gicd().IPRIORITYR.len(),
+            "Invalid interrupt ID for priority: {id:?}"
+        );
+        self.gicd().IPRIORITYR[index].set(priority);
     }
 
     pub fn get_priority(&self, id: IntId) -> u8 {
@@ -358,7 +398,12 @@ impl CpuInterface {
             id.is_private(),
             "Cannot get priority for non-private interrupt: {id:?}"
         );
-        self.gicd().IPRIORITYR[id.to_u32() as usize].get()
+        let index = id.to_u32() as usize;
+        assert!(
+            index < self.gicd().IPRIORITYR.len(),
+            "Invalid interrupt ID for priority: {id:?}"
+        );
+        self.gicd().IPRIORITYR[index].get()
     }
 
     pub fn set_active(&self, id: IntId, active: bool) {

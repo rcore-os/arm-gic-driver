@@ -23,6 +23,8 @@ impl IrqVecWriteable for [ReadWrite<u32>] {
     fn set_irq_bit(&self, index: u32) {
         let reg_index = (index / 32) as usize;
         let bit = 1 << (index % 32);
+        // For GIC ISENABLER/ISPENDR/ISACTIVER etc, writing 1 sets the bit
+        // Writing 0 has no effect, so we can safely write only the target bit
         self[reg_index].set(bit);
     }
     fn clear_irq_bit(&self, intid: u32) {
