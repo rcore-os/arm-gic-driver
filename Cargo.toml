@@ -7,6 +7,7 @@ resolver = "3"
 
 [workspace.dependencies]
 any-uart = {version = "0.2"}
+arm-gic-driver = {path = "gic-driver"}
 log = "0.4"
 somehal = "0.3"
 test-base = {path = "itest/test-base"}

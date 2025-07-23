@@ -101,8 +101,6 @@ register_bitfields! [
     pub PIDR2 [
         ArchRev OFFSET(4) NUMBITS(4) [],
     ],
-
-
 ];
 
 #[allow(unused)]

@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use rdif_intc::*;
 use tock_registers::{register_structs, registers::*};
 
-use super::*;
+// use super::*;
 
 /// GICv2 driver. (support GICv1)
 pub struct Gic {
@@ -15,10 +15,14 @@ unsafe impl Send for Gic {}
 
 impl Gic {
     /// `gicd`: Distributor register base address. `gicc`: CPU interface register base address.
-    pub fn new(gicd: NonNull<u8>, gicc: NonNull<u8>) -> Self {
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the provided pointers are valid and point to the correct GICv2 registers.
+    pub const unsafe fn new(gicd: *mut u8, gicc: *mut u8) -> Self {
         Self {
-            gicd: gicd.cast(),
-            gicc: gicc.cast(),
+            gicd: unsafe { NonNull::new_unchecked(gicd as _) },
+            gicc: unsafe { NonNull::new_unchecked(gicc as _) },
         }
     }
 
