@@ -4,7 +4,7 @@
 use core::ptr::NonNull;
 
 pub use fdt_parser;
-use fdt_parser::{Fdt, Node};
+use fdt_parser::Fdt;
 use log::info;
 pub use somehal;
 use somehal::{boot_info, mem::phys_to_virt};
@@ -25,6 +25,5 @@ pub fn init_test() {
 
 pub fn fdt() -> Fdt<'static> {
     let ptr = phys_to_virt(boot_info().fdt.unwrap().as_ptr() as usize);
-
     Fdt::from_ptr(NonNull::new(ptr).unwrap()).expect("Failed to parse FDT")
 }
