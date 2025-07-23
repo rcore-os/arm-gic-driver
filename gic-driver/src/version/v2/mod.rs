@@ -1,9 +1,13 @@
-mod reg;
-
 use log::trace;
 use tock_registers::{LocalRegisterCopy, interfaces::*};
 
-use reg::*;
+mod gicc;
+mod gicd;
+mod gich;
+
+use gicc::CpuInterfaceReg;
+use gicd::DistributorReg;
+use gich::*;
 
 use crate::{
     IntId,
@@ -157,16 +161,17 @@ impl Gic {
     pub fn send_sgi(&self, sgi_id: u32, target: SGITarget) {
         assert!(sgi_id < 16, "Invalid SGI ID: {sgi_id}");
         let (filter, target_list) = match target {
-            SGITarget::TargetList(list) => {
-                (SGIR::TargetListFilter::TargetList, list.as_u8() as u32)
-            }
-            SGITarget::AllOther => (SGIR::TargetListFilter::AllOther, 0),
-            SGITarget::Current => (SGIR::TargetListFilter::Current, 0),
+            SGITarget::TargetList(list) => (
+                gicd::SGIR::TargetListFilter::TargetList,
+                list.as_u8() as u32,
+            ),
+            SGITarget::AllOther => (gicd::SGIR::TargetListFilter::AllOther, 0),
+            SGITarget::Current => (gicd::SGIR::TargetListFilter::Current, 0),
         };
 
-        self.gicd()
-            .SGIR
-            .write(SGIR::SGIINTID.val(sgi_id) + SGIR::CPUTargetList.val(target_list) + filter);
+        self.gicd().SGIR.write(
+            gicd::SGIR::SGIINTID.val(sgi_id) + gicd::SGIR::CPUTargetList.val(target_list) + filter,
+        );
     }
 
     pub fn set_active(&self, id: IntId, active: bool) {
@@ -248,9 +253,9 @@ pub enum Ack {
 impl From<Ack> for u32 {
     fn from(ack: Ack) -> Self {
         match ack {
-            Ack::Normal(intid) => IAR::InterruptID.val(intid.to_u32()),
+            Ack::Normal(intid) => gicc::IAR::InterruptID.val(intid.to_u32()),
             Ack::SGI { intid, cpu_id } => {
-                IAR::InterruptID.val(intid.to_u32()) + IAR::CPUID.val(cpu_id as u32)
+                gicc::IAR::InterruptID.val(intid.to_u32()) + gicc::IAR::CPUID.val(cpu_id as u32)
             }
         }
         .value
@@ -259,10 +264,10 @@ impl From<Ack> for u32 {
 
 impl From<u32> for Ack {
     fn from(value: u32) -> Self {
-        let reg = LocalRegisterCopy::<u32, IAR::Register>::new(value);
-        let intid = unsafe { IntId::raw(reg.read(IAR::InterruptID)) };
+        let reg = LocalRegisterCopy::<u32, gicc::IAR::Register>::new(value);
+        let intid = unsafe { IntId::raw(reg.read(gicc::IAR::InterruptID)) };
         if intid.is_sgi() {
-            let cpu_id = reg.read(IAR::CPUID) as usize;
+            let cpu_id = reg.read(gicc::IAR::CPUID) as usize;
             Ack::SGI { intid, cpu_id }
         } else {
             Ack::Normal(intid)
@@ -293,7 +298,7 @@ impl CpuInterface {
         gicc.CTLR.set(0);
 
         // 2. Set priority mask to allow all interrupts (lowest priority)
-        gicc.PMR.write(PMR::Priority.val(0xFF));
+        gicc.PMR.write(gicc::PMR::Priority.val(0xFF));
 
         // // 3. Set binary point to default value (no preemption)
         // gicc.BPR.write(BPR::BinaryPoint.val(0x2));
@@ -302,7 +307,7 @@ impl CpuInterface {
         // gicc.ABPR.write(ABPR::BinaryPoint.val(0x3));
 
         // 5. Enable CPU interface for both Group 0 and Group 1 interrupts
-        gicc.CTLR.write(GICC_CTLR::EnableGrp0::SET);
+        gicc.CTLR.write(gicc::CTLR::EnableGrp0::SET);
     }
     /// Set the EOI mode for non-secure interrupts
     ///
@@ -310,21 +315,21 @@ impl CpuInterface {
     /// - `true`  GICC_EOIR has priority drop functionality only. GICC_DIR has deactivate interrupt functionality.
     pub fn set_eoi_mode_ns(&self, is_two_step: bool) {
         if is_two_step {
-            self.gicc().CTLR.modify(GICC_CTLR::EOImodeNS::SET);
+            self.gicc().CTLR.modify(gicc::CTLR::EOImodeNS::SET);
         } else {
-            self.gicc().CTLR.modify(GICC_CTLR::EOImodeNS::CLEAR);
+            self.gicc().CTLR.modify(gicc::CTLR::EOImodeNS::CLEAR);
         };
     }
 
     pub fn eoi_mode_ns(&self) -> bool {
-        self.gicc().CTLR.is_set(GICC_CTLR::EOImodeNS)
+        self.gicc().CTLR.is_set(gicc::CTLR::EOImodeNS)
     }
 
     /// Acknowledge an interrupt and return the interrupt ID
     /// Returns the interrupt ID and source CPU ID (for SGIs)
     pub fn ack(&self) -> Option<Ack> {
         let data = self.gicc().IAR.extract();
-        let id = data.read(IAR::InterruptID);
+        let id = data.read(gicc::IAR::InterruptID);
         if id == 1023 {
             return None;
         }
@@ -334,9 +339,9 @@ impl CpuInterface {
     /// Signal end of interrupt processing
     pub fn eoi(&self, ack: Ack) {
         let val = match ack {
-            Ack::Normal(intid) => EOIR::EOIINTID.val(intid.to_u32()),
+            Ack::Normal(intid) => gicc::EOIR::EOIINTID.val(intid.to_u32()),
             Ack::SGI { intid, cpu_id } => {
-                EOIR::EOIINTID.val(intid.to_u32()) + EOIR::CPUID.val(cpu_id as u32)
+                gicc::EOIR::EOIINTID.val(intid.to_u32()) + gicc::EOIR::CPUID.val(cpu_id as u32)
             }
         };
         self.gicc().EOIR.write(val);
@@ -345,9 +350,9 @@ impl CpuInterface {
     /// Deactivate an interrupt
     pub fn dir(&self, ack: Ack) {
         let val = match ack {
-            Ack::Normal(intid) => DIR::InterruptID.val(intid.to_u32()),
+            Ack::Normal(intid) => gicc::DIR::InterruptID.val(intid.to_u32()),
             Ack::SGI { intid, cpu_id } => {
-                DIR::InterruptID.val(intid.to_u32()) + DIR::CPUID.val(cpu_id as u32)
+                gicc::DIR::InterruptID.val(intid.to_u32()) + gicc::DIR::CPUID.val(cpu_id as u32)
             }
         };
         self.gicc().DIR.write(val);
@@ -366,7 +371,7 @@ impl CpuInterface {
 
     /// Set the priority mask (interrupts with priority >= mask will be masked)
     pub fn set_priority_mask(&self, mask: u8) {
-        self.gicc().PMR.write(PMR::Priority.val(mask as u32));
+        self.gicc().PMR.write(gicc::PMR::Priority.val(mask as u32));
     }
 
     /// Enable a specific interrupt
