@@ -2,12 +2,14 @@ mod reg;
 
 use core::ptr::NonNull;
 use log::trace;
-use rdif_intc::CpuId;
 use tock_registers::interfaces::*;
 
 use reg::*;
 
-use crate::IntId;
+use crate::{
+    IntId,
+    version::{IrqVecReadable, IrqVecWriteable},
+};
 
 /// GICv2 driver. (support GICv1)
 pub struct Gic {
@@ -77,29 +79,43 @@ impl Gic {
     }
 
     /// Enable a specific interrupt
-    pub fn enable_interrupt(&self, id: IntId) {
-        self.gicd().enable_interrupt(id.into());
+    pub fn irq_enable(&self, id: IntId) {
+        self.gicd().ISENABLER.set_irq_bit(id.into());
     }
 
     /// Disable a specific interrupt
-    pub fn disable_interrupt(&self, id: IntId) {
-        self.gicd().disable_interrupt(id.into());
+    pub fn irq_disable(&self, id: IntId) {
+        self.gicd().ICENABLER.set_irq_bit(id.into());
+    }
+
+    pub fn irq_is_enabled(&self, id: IntId) -> bool {
+        self.gicd().ISENABLER.get_irq_bit(id.into())
     }
 
     /// Set interrupt priority (0 = highest priority, 255 = lowest priority)
-    pub fn set_interrupt_priority(&self, interrupt_id: u32, priority: u8) {
-        self.gicd().set_interrupt_priority(interrupt_id, priority);
+    pub fn set_priority(&self, id: IntId, priority: u8) {
+        self.gicd().IPRIORITYR[id.to_u32() as usize].set(priority);
     }
 
-    /// Set interrupt target CPU for SPIs (bit mask, bit 0 = CPU 0, etc.)
-    pub fn set_interrupt_target(&self, interrupt_id: u32, target_cpu_mask: u8) {
-        self.gicd()
-            .set_interrupt_target(interrupt_id, target_cpu_mask);
+    pub fn get_priority(&self, id: IntId) -> u8 {
+        self.gicd().IPRIORITYR[id.to_u32() as usize].get()
+    }
+
+    /// Set interrupt target CPU for SPIs
+    pub fn set_target_cpu(&self, id: IntId, target_list: TargetList) {
+        if id.is_private() {
+            return;
+        }
+        self.gicd().ITARGETSR[id.to_u32() as usize].set(target_list.as_u8());
     }
 
     /// Configure interrupt as Group 0 (Secure) or Group 1 (Non-secure)
-    pub fn set_interrupt_group(&self, interrupt_id: u32, group1: bool) {
-        self.gicd().set_interrupt_group(interrupt_id, group1);
+    pub fn set_interrupt_group1(&self, id: IntId, group1: bool) {
+        if group1 {
+            self.gicd().IGROUPR.set_irq_bit(id.into());
+        } else {
+            self.gicd().IGROUPR.clear_irq_bit(id.into());
+        }
     }
 
     /// Send a Software Generated Interrupt (SGI) to target CPUs
@@ -110,7 +126,9 @@ impl Gic {
     pub fn send_sgi(&self, sgi_id: u32, target: SGITarget) {
         assert!(sgi_id < 16, "Invalid SGI ID: {sgi_id}");
         let (filter, target_list) = match target {
-            SGITarget::TargetList(list) => (SGIR::TargetListFilter::TargetList, list as u32),
+            SGITarget::TargetList(list) => {
+                (SGIR::TargetListFilter::TargetList, list.as_u8() as u32)
+            }
             SGITarget::AllOther => (SGIR::TargetListFilter::AllOther, 0),
             SGITarget::Current => (SGIR::TargetListFilter::Current, 0),
         };
@@ -124,22 +142,42 @@ impl Gic {
 #[derive(Debug, Clone, Copy)]
 pub enum SGITarget {
     /// Forward to CPUs listed in CPUTargetList (cpu mask)
-    TargetList(u8),
+    TargetList(TargetList),
     /// Forward to all CPUs except the requesting CPU
     AllOther,
     /// Forward only to the requesting CPU
     Current,
 }
 
-impl SGITarget {
-    /// Create a new SGITarget with a specific CPU target list. list is Cpu interface IDs.
-    pub fn new_target_list(list: impl Iterator<Item = usize>) -> Self {
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy)]
+pub struct TargetList(u8);
+
+impl TargetList {
+    /// Create a new TargetList with a specific CPU target list. list is Cpu interface IDs.
+    pub fn new(list: impl Iterator<Item = usize>) -> Self {
         let mut raw = 0;
         for cpu in list {
             assert!(cpu < 8, "Invalid CPU Interface: {cpu}");
             raw |= 1 << cpu; // Set bit for each target CPU
         }
-        Self::TargetList(raw)
+        Self(raw)
+    }
+
+    pub fn add(&mut self, cpu: usize) {
+        assert!(cpu < 8, "Invalid CPU Interface: {cpu}");
+        self.0 |= 1 << cpu; // Set bit for the target CPU
+    }
+
+    pub fn as_u8(&self) -> u8 {
+        self.0
+    }
+}
+
+impl SGITarget {
+    /// Create a new SGITarget with a specific CPU target list. list is Cpu interface IDs.
+    pub fn new_target_list(val: TargetList) -> Self {
+        Self::TargetList(val)
     }
 }
 

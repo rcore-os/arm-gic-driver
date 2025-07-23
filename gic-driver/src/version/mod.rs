@@ -1,7 +1,4 @@
-use core::{
-    error::Error,
-    ops::{Index},
-};
+use core::error::Error;
 
 use alloc::boxed::Box;
 use rdif_intc::*;
@@ -13,14 +10,38 @@ pub mod v3;
 
 use crate::define::*;
 
-fn set_vector32_bit<V, T>(vec: &V, index: u32)
-where
-    T: Writeable<T = u32>,
-    V: Index<usize, Output = T>,
-{
-    let reg_idx = index / 32;
-    let bit_idx = index % 32;
-    vec[reg_idx as usize].set(1 << bit_idx);
+/// 通用 trait：为一组 ReadWrite<u32> 寄存器设置某一位
+trait IrqVecWriteable {
+    fn set_irq_bit(&self, intid: u32);
+    fn clear_irq_bit(&self, intid: u32);
+}
+trait IrqVecReadable {
+    fn get_irq_bit(&self, intid: u32) -> bool;
+}
+
+impl IrqVecWriteable for [ReadWrite<u32>] {
+    fn set_irq_bit(&self, index: u32) {
+        let reg_index = (index / 32) as usize;
+        let bit = 1 << (index % 32);
+        self[reg_index].set(bit);
+    }
+    fn clear_irq_bit(&self, intid: u32) {
+        let reg_index = (intid / 32) as usize;
+        let bit = 1 << (intid % 32);
+        let old = self[reg_index].get();
+        if old & bit == 0 {
+            return; // Already cleared
+        }
+        self[reg_index].set(old & !bit);
+    }
+}
+
+impl IrqVecReadable for [ReadWrite<u32>] {
+    fn get_irq_bit(&self, index: u32) -> bool {
+        let reg_index = (index / 32) as usize;
+        let bit = 1 << (index % 32);
+        self[reg_index].get() & bit != 0
+    }
 }
 
 register_structs! {

@@ -1,6 +1,6 @@
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
-use crate::version::set_vector32_bit;
+use crate::version::IrqVecWriteable;
 
 register_structs! {
     #[allow(non_snake_case)]
@@ -177,16 +177,6 @@ impl DistributorReg {
         for i in 0..num_regs {
             self.ICFGR[i].set(0);
         }
-    }
-
-    /// Enable a specific interrupt
-    pub fn enable_interrupt(&self, interrupt_id: u32) {
-        set_vector32_bit(&self.ISENABLER, interrupt_id);
-    }
-
-    /// Disable a specific interrupt
-    pub fn disable_interrupt(&self, interrupt_id: u32) {
-        set_vector32_bit(&self.ICENABLER, interrupt_id);
     }
 
     /// Set interrupt priority
