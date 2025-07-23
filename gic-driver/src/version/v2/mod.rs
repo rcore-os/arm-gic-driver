@@ -106,10 +106,19 @@ impl Gic {
 
     /// Set interrupt target CPU for SPIs
     pub fn set_target_cpu(&self, id: IntId, target_list: TargetList) {
-        if id.is_private() {
-            return;
-        }
+        assert!(
+            !id.is_private(),
+            "Cannot set target CPU for private interrupt: {id:?}"
+        );
         self.gicd().ITARGETSR[id.to_u32() as usize].set(target_list.as_u8());
+    }
+
+    pub fn get_target_cpu(&self, id: IntId) -> TargetList {
+        assert!(
+            !id.is_private(),
+            "Cannot get target CPU for private interrupt: {id:?}"
+        );
+        TargetList(self.gicd().ITARGETSR[id.to_u32() as usize].get())
     }
 
     /// Configure interrupt as Group 0 (Secure) or Group 1 (Non-secure)
@@ -139,6 +148,30 @@ impl Gic {
         self.gicd()
             .SGIR
             .write(SGIR::SGIINTID.val(sgi_id) + SGIR::CPUTargetList.val(target_list) + filter);
+    }
+
+    pub fn set_active(&self, id: IntId, active: bool) {
+        if active {
+            self.gicd().ISACTIVER.set_irq_bit(id.into());
+        } else {
+            self.gicd().ICACTIVER.set_irq_bit(id.into());
+        }
+    }
+
+    pub fn is_active(&self, id: IntId) -> bool {
+        self.gicd().ISACTIVER.get_irq_bit(id.into())
+    }
+
+    pub fn set_pending(&self, id: IntId, pending: bool) {
+        if pending {
+            self.gicd().ISPENDR.set_irq_bit(id.into());
+        } else {
+            self.gicd().ICPENDR.set_irq_bit(id.into());
+        }
+    }
+
+    pub fn is_pending(&self, id: IntId) -> bool {
+        self.gicd().ISPENDR.get_irq_bit(id.into())
     }
 }
 
@@ -174,6 +207,10 @@ impl TargetList {
 
     pub fn as_u8(&self) -> u8 {
         self.0
+    }
+
+    pub fn cpu_id_list(&self) -> impl Iterator<Item = usize> {
+        (0..8).filter(move |i| (self.0 & (1 << i)) != 0)
     }
 }
 
@@ -322,5 +359,45 @@ impl CpuInterface {
             "Cannot get priority for non-private interrupt: {id:?}"
         );
         self.gicd().IPRIORITYR[id.to_u32() as usize].get()
+    }
+
+    pub fn set_active(&self, id: IntId, active: bool) {
+        assert!(
+            id.is_private(),
+            "Cannot set active state for non-private interrupt: {id:?}"
+        );
+        if active {
+            self.gicd().ISACTIVER.set_irq_bit(id.into());
+        } else {
+            self.gicd().ICACTIVER.set_irq_bit(id.into());
+        }
+    }
+
+    pub fn is_active(&self, id: IntId) -> bool {
+        assert!(
+            id.is_private(),
+            "Cannot check active state for non-private interrupt: {id:?}"
+        );
+        self.gicd().ISACTIVER.get_irq_bit(id.into())
+    }
+
+    pub fn set_pending(&self, id: IntId, pending: bool) {
+        assert!(
+            id.is_private(),
+            "Cannot set pending state for non-private interrupt: {id:?}"
+        );
+        if pending {
+            self.gicd().ISPENDR.set_irq_bit(id.into());
+        } else {
+            self.gicd().ICPENDR.set_irq_bit(id.into());
+        }
+    }
+
+    pub fn is_pending(&self, id: IntId) -> bool {
+        assert!(
+            id.is_private(),
+            "Cannot check pending state for non-private interrupt: {id:?}"
+        );
+        self.gicd().ISPENDR.get_irq_bit(id.into())
     }
 }
