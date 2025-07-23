@@ -1,0 +1,96 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "KDebug lldb",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/kernel.elf",
+            "initCommands": [
+                "platform select remote-gdb-server"
+            ],
+            "targetCreateCommands": [
+                "target create ${workspaceFolder}/target/kernel.elf"
+            ],
+            "processCreateCommands": [
+                "gdb-remote localhost:1234" // Connect to the GDB Server
+            ],
+            "preLaunchTask": "qemu debug aarch64 rt",
+            "preRunCommands": [
+                "target modules load --file ${workspaceFolder}/target/kernel.elf .head.text 0x40200000",
+                "image add ${workspaceFolder}/target/aarch64-unknown-none/debug/loader.elf",
+                "target modules load --file ${workspaceFolder}/target/aarch64-unknown-none/debug/loader.elf .text 0x40203000",
+                // "target modules load --file ${workspaceFolder}/target/aarch64-unknown-none/debug/loader.elf --slide 0xF00000000",
+            ]
+        },
+        {
+            "type": "cppdbg",
+            "name": "Debug aarch64 rt test",
+            "request": "launch",
+            "miDebuggerServerAddress": "localhost:1234",
+            "program": "${workspaceFolder}/target/kernel.elf",
+            "miDebuggerPath": "gdb-multiarch",
+            "cwd": "${workspaceRoot}",
+            "preLaunchTask": "qemu debug aarch64 rt",
+            "stopAtConnect": true,
+            "showDisplayString": true,
+            // "setupCommands": [
+            //     {
+            //         "text": "add-symbol-file ${workspaceFolder}/target/kernel.elf -s .boot.text 0x40200000",
+            //     },
+            // ]
+        },
+        {
+            "type": "cppdbg",
+            "name": "Debug aarch64 test",
+            "request": "launch",
+            "miDebuggerServerAddress": "localhost:1234",
+            "program": "${workspaceFolder}/target/kernel.elf",
+            "miDebuggerPath": "gdb-multiarch",
+            "cwd": "${workspaceRoot}",
+            "preLaunchTask": "qemu debug aarch64",
+            "stopAtConnect": true,
+            // "setupCommands": [
+            //     {
+            //         "text": "add-symbol-file ${workspaceFolder}/target/kernel.elf -s .boot.text 0x40200000",
+            //     },
+            // ]
+        },
+        {
+            "type": "cppdbg",
+            "name": "Debug aarch64 vm test",
+            "request": "launch",
+            "miDebuggerServerAddress": "localhost:1234",
+            "program": "${workspaceFolder}/target/kernel.elf",
+            "miDebuggerPath": "gdb-multiarch",
+            "cwd": "${workspaceRoot}",
+            "preLaunchTask": "qemu debug aarch64 vm",
+            "stopAtConnect": true
+        },
+        {
+            "type": "cppdbg",
+            "name": "Debug x86_64 test",
+            "request": "launch",
+            "miDebuggerServerAddress": "localhost:1234",
+            "program": "${workspaceFolder}/target/kernel.elf",
+            "miDebuggerPath": "gdb-multiarch",
+            "cwd": "${workspaceRoot}",
+            "preLaunchTask": "qemu debug x86_64",
+            "stopAtConnect": true
+        },
+        {
+            "type": "cppdbg",
+            "name": "Debug riscv64 test",
+            "request": "launch",
+            "miDebuggerServerAddress": "localhost:1234",
+            "program": "${workspaceFolder}/target/kernel.elf",
+            "miDebuggerPath": "gdb-multiarch",
+            "cwd": "${workspaceRoot}",
+            "preLaunchTask": "qemu debug riscv64",
+            "stopAtConnect": true
+        },
+    ]
+}

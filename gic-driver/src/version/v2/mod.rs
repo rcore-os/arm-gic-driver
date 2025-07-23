@@ -295,19 +295,14 @@ impl CpuInterface {
         // 2. Set priority mask to allow all interrupts (lowest priority)
         gicc.PMR.write(PMR::Priority.val(0xFF));
 
-        // 3. Set binary point to default value (no preemption)
-        gicc.BPR.write(BPR::BinaryPoint.val(0x2));
+        // // 3. Set binary point to default value (no preemption)
+        // gicc.BPR.write(BPR::BinaryPoint.val(0x2));
 
-        // 4. Set aliased binary point for Group 1 interrupts
-        gicc.ABPR.write(ABPR::BinaryPoint.val(0x3));
+        // // 4. Set aliased binary point for Group 1 interrupts
+        // gicc.ABPR.write(ABPR::BinaryPoint.val(0x3));
 
         // 5. Enable CPU interface for both Group 0 and Group 1 interrupts
-        gicc.CTLR.write(
-            GICC_CTLR::EnableGrp0::SET +
-            GICC_CTLR::EnableGrp1::SET +
-            GICC_CTLR::FIQEn::CLEAR +      // Use IRQ for Group 0 interrupts
-            GICC_CTLR::AckCtl::CLEAR, // Separate acknowledge for groups
-        );
+        gicc.CTLR.write(GICC_CTLR::EnableGrp0::SET);
     }
     /// Set the EOI mode for non-secure interrupts
     ///

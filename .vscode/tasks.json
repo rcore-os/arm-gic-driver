@@ -1,0 +1,177 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "qemu debug aarch64 rt",
+            "command": "cargo",
+            "args": [
+                "test",
+                "--target",
+                "aarch64-unknown-none",
+                "-p",
+                "test-gicv2",
+                "--test",
+                "test",
+                "--",
+                "--no-run",
+                "--show-output",
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+            },
+            "problemMatcher": {
+                "base": "$rustc",
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*",
+                    "endsPattern": "^.*Running tests"
+                }
+            },
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "detail": "断点调试 test 测试用例",
+            "isBackground": true,
+        },
+        {
+            "type": "shell",
+            "label": "qemu debug aarch64",
+            "command": "cargo",
+            "args": [
+                "test",
+                "--target",
+                "aarch64-unknown-none",
+                "-p",
+                "platform-test",
+                "--test",
+                "test",
+                "--",
+                "--no-run",
+                "--show-output",
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+            },
+            "problemMatcher": {
+                "base": "$rustc",
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*",
+                    "endsPattern": "^.*Running tests"
+                }
+            },
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "detail": "断点调试 test 测试用例",
+            "isBackground": true,
+        },
+        {
+            "type": "shell",
+            "label": "qemu debug aarch64 vm",
+            "command": "cargo",
+            "args": [
+                "test",
+                "--target",
+                "aarch64-unknown-none",
+                "-p",
+                "platform-test",
+                "--features",
+                "somehal/early-debug,somehal/vm",
+                "--test",
+                "test",
+                "--",
+                "--no-run",
+                "--show-output",
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+            },
+            "problemMatcher": {
+                "base": "$rustc",
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*",
+                    "endsPattern": "^.*Running tests"
+                }
+            },
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "detail": "断点调试 test 测试用例",
+            "isBackground": true,
+        },
+        {
+            "type": "shell",
+            "label": "qemu debug x86_64",
+            "command": "cargo",
+            "args": [
+                "test",
+                "--target",
+                "x86_64-unknown-none",
+                "-p",
+                "platform-test",
+                "--test",
+                "test",
+                "--",
+                "--no-run",
+                "--show-output",
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+            },
+            "problemMatcher": {
+                "base": "$rustc",
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*",
+                    "endsPattern": "^.*Running tests"
+                }
+            },
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "detail": "断点调试 test 测试用例",
+            "isBackground": true,
+        },
+        {
+            "type": "shell",
+            "label": "qemu debug riscv64",
+            "command": "cargo",
+            "args": [
+                "test",
+                "--target",
+                "riscv64gc-unknown-none-elf",
+                "-p",
+                "platform-test",
+                "--test",
+                "test",
+                "--",
+                "--no-run",
+                "--show-output",
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+            },
+            "problemMatcher": {
+                "base": "$rustc",
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^.*",
+                    "endsPattern": "^.*Running tests"
+                }
+            },
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "detail": "断点调试 test 测试用例",
+            "isBackground": true,
+        }
+    ]
+}

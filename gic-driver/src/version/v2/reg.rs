@@ -119,15 +119,14 @@ impl DistributorReg {
         }
     }
 
-    /// Configure interrupt groups - set all interrupts to Group 1 (Non-secure) by default
+    /// Configure interrupt groups - set all interrupts to Group 0 by default
     pub fn configure_interrupt_groups(&self, max_interrupts: u32) {
         // Calculate number of IGROUPR registers needed
         let num_regs = max_interrupts.div_ceil(32) as usize;
         let num_regs = num_regs.min(self.IGROUPR.len());
 
-        // Set all interrupts to Group 1 (Non-secure)
         for i in 0..num_regs {
-            self.IGROUPR[i].set(u32::MAX);
+            self.IGROUPR[i].set(0);
         }
     }
 
