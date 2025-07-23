@@ -12,6 +12,7 @@ use test_base::{somehal::mem::iomap, *};
 static GIC: Mutex<v2::Gic> = Mutex::new(unsafe { v2::Gic::new(null_mut(), null_mut()) });
 static CPU_IF: Mutex<Option<v2::CpuInterface>> = Mutex::new(None);
 static TIMER_INTERRUPT_FIRED: AtomicBool = AtomicBool::new(false);
+static SGI_INTERRUPT_FIRED: AtomicBool = AtomicBool::new(false);
 
 #[somehal::entry]
 fn main(_args: &somehal::BootInfo) -> ! {
@@ -20,6 +21,8 @@ fn main(_args: &somehal::BootInfo) -> ! {
     info!("test_systice_irq");
     test_systice_irq();
     info!("test_systice_irq done");
+    test_sgi_to_current_cpu_irq();
+    info!("test_sgi_irq done");
 
     info!("{TEST_SUCCESS}");
 }
@@ -181,6 +184,99 @@ fn test_systice_irq() {
     debug!("Timer interrupt test completed successfully");
 }
 
+fn test_sgi_to_current_cpu_irq() {
+    // 使用 SGI 0 (Software Generated Interrupt 0)
+    let sgi_irq = arm_gic_driver::IntId::sgi(0);
+
+    debug!("Testing SGI to current CPU: {sgi_irq:?}");
+
+    // 重置全局标志
+    SGI_INTERRUPT_FIRED.store(false, Ordering::SeqCst);
+
+    // 配置SGI中断
+    {
+        let cpu_if = CPU_IF.lock();
+        let cpu = cpu_if.as_ref().unwrap();
+
+        // 设置中断优先级
+        cpu.set_priority(sgi_irq, 0x80);
+        debug!("Set SGI interrupt priority to 0x80");
+
+        // 启用SGI中断
+        cpu.irq_enable(sgi_irq);
+        debug!("Enabled SGI interrupt");
+
+        // 检查中断是否已启用
+        let enabled = cpu.irq_is_enabled(sgi_irq);
+        debug!("SGI interrupt enabled: {enabled}");
+        assert!(enabled, "SGI interrupt should be enabled");
+    }
+
+    // 发送SGI到当前CPU
+    {
+        let gic = GIC.lock();
+        debug!("Sending SGI 1 to current CPU...");
+        gic.send_sgi(1, v2::SGITarget::Current);
+        debug!("SGI sent successfully");
+    }
+
+    // 等待SGI中断触发 - 循环等待2ms
+    debug!("Waiting for SGI interrupt (2ms timeout)...");
+
+    let start_time = unsafe {
+        let counter: u64;
+        core::arch::asm!("mrs {}, cntpct_el0", out(reg) counter);
+        counter
+    };
+
+    let timer_freq: u64 = unsafe {
+        let freq: u64;
+        core::arch::asm!("mrs {}, cntfrq_el0", out(reg) freq);
+        freq
+    };
+
+    let timeout_duration = timer_freq / 500; // 2ms
+
+    loop {
+        let current_time = unsafe {
+            let counter: u64;
+            core::arch::asm!("mrs {}, cntpct_el0", out(reg) counter);
+            counter
+        };
+
+        // 检查SGI中断是否已触发
+        if SGI_INTERRUPT_FIRED.load(Ordering::SeqCst) {
+            debug!("SGI interrupt successfully fired!");
+            break;
+        }
+
+        // 检查是否超时 (2ms)
+        if current_time.wrapping_sub(start_time) > timeout_duration {
+            // 禁用中断
+            {
+                let cpu_if = CPU_IF.lock();
+                let cpu = cpu_if.as_ref().unwrap();
+                cpu.irq_disable(sgi_irq);
+            }
+
+            panic!("SGI interrupt test failed: interrupt did not fire within 2ms");
+        }
+
+        // 短暂延迟
+        core::hint::spin_loop();
+    }
+
+    // 禁用SGI中断
+    {
+        let cpu_if = CPU_IF.lock();
+        let cpu = cpu_if.as_ref().unwrap();
+        cpu.irq_disable(sgi_irq);
+        debug!("Disabled SGI interrupt");
+    }
+
+    debug!("SGI interrupt test completed successfully");
+}
+
 #[somehal::irq_handler]
 fn irq_handler() {
     // debug!("IRQ handler invoked");
@@ -191,7 +287,7 @@ fn irq_handler() {
     if let Some(irq) = ack {
         debug!("Handling IRQ: {irq:?}");
 
-        // 检查是否是定时器中断 (PPI 30)
+        // 检查中断类型
         match irq {
             v2::Ack::Normal(intid) if intid == arm_gic_driver::IntId::ppi(14) => {
                 debug!("Timer interrupt received!");
@@ -202,8 +298,15 @@ fn irq_handler() {
                     core::arch::asm!("msr cntp_ctl_el0, {}", in(reg) 0u64);
                 }
             }
+            v2::Ack::SGI { intid, cpu_id } => {
+                if intid != arm_gic_driver::IntId::sgi(1) {
+                    panic!("Unexpected SGI interrupt: {intid:?}");
+                }
+                debug!("SGI interrupt received from CPU {cpu_id}!");
+                SGI_INTERRUPT_FIRED.store(true, Ordering::SeqCst);
+            }
             _ => {
-                panic!("Unexpected interrupt received: {irq:?}");
+                debug!("Other interrupt received: {irq:?}");
             }
         }
 
