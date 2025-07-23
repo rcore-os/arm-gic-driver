@@ -37,6 +37,8 @@ fn init_gic() {
     let mut regs = gicv2_node.reg().unwrap();
     let gicd_base = regs.next().expect("GICD base address not found");
     let gicc_base = regs.next().expect("GICC base address not found");
+    let gich_base = regs.next().expect("GICH base address not found");
+    let gicv_base = regs.next().expect("GICV base address not found");
 
     debug!("GICv2 node: {:?}", gicv2_node.name());
     debug!(
@@ -48,6 +50,10 @@ fn init_gic() {
         .expect("Failed to map GICD base address");
     let gicc_base = iomap(gicc_base.address as _, gicc_base.size.unwrap_or_default())
         .expect("Failed to map GICC base address");
+    let gich_base = iomap(gich_base.address as _, gich_base.size.unwrap_or_default())
+        .expect("Failed to map GICH base address");
+    let gicv_base = iomap(gicv_base.address as _, gicv_base.size.unwrap_or_default())
+        .expect("Failed to map GICV base address");
 
     let mut gic = unsafe { v2::Gic::new(gicd_base.as_ptr(), gicc_base.as_ptr()) };
 
