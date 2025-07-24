@@ -1,9 +1,6 @@
 #![no_std]
 #![doc = include_str!("../../README.md")]
 
-extern crate alloc;
-extern crate core;
-
 pub(crate) mod define;
 #[cfg(test)]
 mod tests;

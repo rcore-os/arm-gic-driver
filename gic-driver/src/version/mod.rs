@@ -1,6 +1,3 @@
-use core::error::Error;
-
-use alloc::{boxed::Box, format};
 use tock_registers::{interfaces::*, registers::*};
 
 pub mod v2;
