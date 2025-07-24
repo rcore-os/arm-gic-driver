@@ -32,11 +32,8 @@ pub struct HyperAddress {
 }
 
 impl HyperAddress {
-    pub fn new(gich: NonNull<u8>, gicv: NonNull<u8>) -> Self {
-        Self {
-            gich: gich.as_ptr() as _,
-            gicv: gicv.as_ptr() as _,
-        }
+    pub fn new(gich: VirtAddr, gicv: VirtAddr) -> Self {
+        Self { gich, gicv }
     }
 }
 
@@ -52,38 +49,21 @@ impl Gic {
             gicc,
             gich: match hyper {
                 Some(addr) => Some(unsafe {
-                    HypervisorInterface::new(addr.gich as *mut u8, addr.gicv as *mut u8)
+                    HypervisorInterface::new(addr.gich.as_ptr(), addr.gicv.as_ptr())
                 }),
                 None => None,
             },
         }
     }
 
-    pub fn new_with_non_null(
-        gicd: NonNull<u8>,
-        gicc: NonNull<u8>,
-        hyper: Option<HyperAddress>,
-    ) -> Self {
-        unsafe {
-            Self::new(
-                gicd.as_ptr() as _,
-                gicc.as_ptr() as _,
-                hyper.map(|h| HyperAddress {
-                    gich: h.gich,
-                    gicv: h.gicv,
-                }),
-            )
-        }
-    }
-
     fn gicd(&self) -> &DistributorReg {
-        unsafe { &*(self.gicd as *const _) }
+        unsafe { &*(self.gicd.as_ptr()) }
     }
 
     pub fn cpu_interface(&self) -> CpuInterface {
         CpuInterface {
-            gicd: self.gicd as _,
-            gicc: self.gicc as _,
+            gicd: self.gicd.as_ptr(),
+            gicc: self.gicc.as_ptr(),
         }
     }
 
@@ -97,7 +77,10 @@ impl Gic {
     /// Initialize the GIC according to GICv2 specification
     /// This includes both Distributor and CPU Interface initialization
     pub fn init(&mut self) {
-        trace!("Initializing GICv2 Distributor@{:#x}...", self.gicd);
+        trace!(
+            "Initializing GICv2 Distributor@{:#p}...",
+            self.gicd.as_ptr::<u8>()
+        );
         // 1. Disable the Distributor first
         self.gicd().disable();
 

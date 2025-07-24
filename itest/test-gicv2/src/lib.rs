@@ -3,12 +3,16 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use arm_gic_driver::v2::{self, HyperAddress};
+use arm_gic_driver::{
+    VirtAddr,
+    v2::{self, HyperAddress},
+};
 use log::{debug, info};
 use spin::Mutex;
 use test_base::{somehal::mem::iomap, *};
 
-static GIC: Mutex<v2::Gic> = Mutex::new(unsafe { v2::Gic::new(0, 0, None) });
+static GIC: Mutex<v2::Gic> =
+    Mutex::new(unsafe { v2::Gic::new(VirtAddr::new(0), VirtAddr::new(0), None) });
 static CPU_IF: Mutex<Option<v2::CpuInterface>> = Mutex::new(None);
 static TIMER_INTERRUPT_FIRED: AtomicBool = AtomicBool::new(false);
 static SGI_INTERRUPT_FIRED: AtomicBool = AtomicBool::new(false);
@@ -54,11 +58,13 @@ fn init_gic() {
     let gicv_base = iomap(gicv_base.address as _, gicv_base.size.unwrap_or_default())
         .expect("Failed to map GICV base address");
 
-    let mut gic = v2::Gic::new_with_non_null(
-        gicd_base,
-        gicc_base,
-        Some(HyperAddress::new(gich_base, gicv_base)),
-    );
+    let mut gic = unsafe {
+        v2::Gic::new(
+            gicd_base.into(),
+            gicc_base.into(),
+            Some(HyperAddress::new(gich_base.into(), gicv_base.into())),
+        )
+    };
 
     gic.init();
     debug!("GICv2 initialized successfully");
