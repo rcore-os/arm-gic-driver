@@ -1,17 +1,19 @@
 use log::trace;
-use tock_registers::{LocalRegisterCopy, interfaces::*};
+use tock_registers::{interfaces::*, LocalRegisterCopy};
 
 mod gicc;
 mod gicd;
 mod gich;
+mod gicv;
 
 use gicc::CpuInterfaceReg;
 use gicd::DistributorReg;
-// use gich::HypervisorRegs;
+use gich::HypervisorRegs;
+use gicv::VirtualCpuInterfaceReg;
 
 use crate::{
-    IntId,
     version::{IrqVecReadable, IrqVecWriteable},
+    IntId,
 };
 
 /// GICv2 driver. (support GICv1)
@@ -468,8 +470,306 @@ impl CpuInterface {
     }
 }
 
-// pub struct HypervisorInterface {
-//     base: *mut HypervisorRegs,
-// }
+/// GIC Hypervisor Interface for virtualization support
+pub struct HypervisorInterface {
+    gich: *mut HypervisorRegs,
+}
 
-// unsafe impl Send for HypervisorInterface {}
+unsafe impl Send for HypervisorInterface {}
+
+impl HypervisorInterface {
+    /// Create a new HypervisorInterface
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the provided pointer is valid and points to the correct GICH registers.
+    pub const unsafe fn new(gich: *mut u8) -> Self {
+        Self { gich: gich as _ }
+    }
+
+    fn gich(&self) -> &HypervisorRegs {
+        unsafe { &*self.gich }
+    }
+
+    /// Initialize the hypervisor interface
+    pub fn init(&mut self) {
+        let gich = self.gich();
+
+        // Disable the hypervisor interface first
+        gich.HCR.set(0);
+
+        // Clear all list registers
+        for lr in &gich.LR {
+            lr.set(0);
+        }
+
+        // Clear active priorities
+        gich.APR.set(0);
+    }
+
+    /// Enable the virtual CPU interface
+    pub fn enable(&self) {
+        self.gich().HCR.modify(gich::HCR::En::SET);
+    }
+
+    /// Disable the virtual CPU interface
+    pub fn disable(&self) {
+        self.gich().HCR.modify(gich::HCR::En::CLEAR);
+    }
+
+    /// Set a maintenance interrupt enable
+    pub fn set_maintenance_interrupt(&self, int_type: MaintenanceInterruptType, enable: bool) {
+        match int_type {
+            MaintenanceInterruptType::Underflow => {
+                if enable {
+                    self.gich().HCR.modify(gich::HCR::UIE::SET);
+                } else {
+                    self.gich().HCR.modify(gich::HCR::UIE::CLEAR);
+                }
+            }
+            MaintenanceInterruptType::ListRegEntryNotPresent => {
+                if enable {
+                    self.gich().HCR.modify(gich::HCR::LRENPIE::SET);
+                } else {
+                    self.gich().HCR.modify(gich::HCR::LRENPIE::CLEAR);
+                }
+            }
+            MaintenanceInterruptType::NoPending => {
+                if enable {
+                    self.gich().HCR.modify(gich::HCR::NPIE::SET);
+                } else {
+                    self.gich().HCR.modify(gich::HCR::NPIE::CLEAR);
+                }
+            }
+            MaintenanceInterruptType::VGrp0Enable => {
+                if enable {
+                    self.gich().HCR.modify(gich::HCR::VGrp0EIE::SET);
+                } else {
+                    self.gich().HCR.modify(gich::HCR::VGrp0EIE::CLEAR);
+                }
+            }
+            MaintenanceInterruptType::VGrp0Disable => {
+                if enable {
+                    self.gich().HCR.modify(gich::HCR::VGrp0DIE::SET);
+                } else {
+                    self.gich().HCR.modify(gich::HCR::VGrp0DIE::CLEAR);
+                }
+            }
+            MaintenanceInterruptType::VGrp1Enable => {
+                if enable {
+                    self.gich().HCR.modify(gich::HCR::VGrp1EIE::SET);
+                } else {
+                    self.gich().HCR.modify(gich::HCR::VGrp1EIE::CLEAR);
+                }
+            }
+            MaintenanceInterruptType::VGrp1Disable => {
+                if enable {
+                    self.gich().HCR.modify(gich::HCR::VGrp1DIE::SET);
+                } else {
+                    self.gich().HCR.modify(gich::HCR::VGrp1DIE::CLEAR);
+                }
+            }
+        }
+    }
+
+    /// Set a virtual interrupt in a list register
+    pub fn set_virtual_interrupt(
+        &self,
+        lr_index: usize,
+        config: VirtualInterruptConfig,
+    ) -> Result<(), &'static str> {
+        if lr_index >= 64 {
+            return Err("Invalid list register index");
+        }
+
+        let mut lr_val = gich::LR::VirtualID.val(config.virtual_id.to_u32())
+            + gich::LR::Priority.val(config.priority as u32)
+            + gich::LR::State.val(config.state as u32);
+
+        if config.group1 {
+            lr_val += gich::LR::Grp1::SET;
+        }
+
+        if config.hw_interrupt {
+            lr_val += gich::LR::HW::SET + gich::LR::PhysicalID.val(config.physical_id.unwrap_or(0));
+        } else {
+            if let Some(cpu_id) = config.cpu_id {
+                lr_val += gich::LR::CPUID.val(cpu_id as u32);
+            }
+            if config.eoi_maintenance {
+                lr_val += gich::LR::EOI::SET;
+            }
+        }
+
+        self.gich().LR[lr_index].write(lr_val);
+        Ok(())
+    }
+
+    /// Get the maintenance interrupt status
+    pub fn get_maintenance_status(&self) -> u32 {
+        self.gich().MISR.get()
+    }
+
+    /// Get the number of implemented list registers
+    pub fn get_list_register_count(&self) -> usize {
+        (self.gich().VTR.read(gich::VTR::ListRegs) + 1) as usize
+    }
+
+    /// Get EOI status registers
+    pub fn get_eoi_status(&self) -> (u32, u32) {
+        (self.gich().EISR0.get(), self.gich().EISR1.get())
+    }
+
+    /// Get empty list register status
+    pub fn get_empty_lr_status(&self) -> (u32, u32) {
+        (self.gich().ELRSR0.get(), self.gich().ELRSR1.get())
+    }
+}
+
+/// GIC Virtual CPU Interface for guest VMs
+pub struct VirtualCpuInterface {
+    gicv: *mut VirtualCpuInterfaceReg,
+}
+
+unsafe impl Send for VirtualCpuInterface {}
+
+impl VirtualCpuInterface {
+    /// Create a new VirtualCpuInterface
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the provided pointer is valid and points to the correct GICV registers.
+    pub const unsafe fn new(gicv: *mut u8) -> Self {
+        Self { gicv: gicv as _ }
+    }
+
+    fn gicv(&self) -> &VirtualCpuInterfaceReg {
+        unsafe { &*self.gicv }
+    }
+
+    /// Initialize the virtual CPU interface
+    pub fn init(&mut self) {
+        let gicv = self.gicv();
+
+        // Disable the interface first
+        gicv.CTLR.set(0);
+
+        // Set priority mask to allow all interrupts
+        gicv.PMR.write(gicv::PMR::Priority.val(0x1F)); // 5 bits for virtual interface
+
+        // Set binary point to default
+        gicv.BPR.write(gicv::BPR::BinaryPoint.val(0x2));
+        gicv.ABPR.write(gicv::ABPR::BinaryPoint.val(0x3));
+
+        // Enable both Group 0 and Group 1 virtual interrupts
+        gicv.CTLR
+            .write(gicv::CTLR::EnableGrp0::SET + gicv::CTLR::EnableGrp1::SET);
+    }
+
+    /// Set the EOI mode for virtual interrupts
+    pub fn set_eoi_mode(&self, is_two_step: bool) {
+        if is_two_step {
+            self.gicv().CTLR.modify(gicv::CTLR::EOImode::SET);
+        } else {
+            self.gicv().CTLR.modify(gicv::CTLR::EOImode::CLEAR);
+        }
+    }
+
+    /// Acknowledge a virtual interrupt
+    pub fn ack(&self) -> Option<VirtualAck> {
+        let data = self.gicv().IAR.extract();
+        let id = data.read(gicv::IAR::InterruptID);
+        if id == 1023 {
+            return None;
+        }
+
+        let intid = unsafe { IntId::raw(id) };
+        if intid.is_sgi() {
+            let cpu_id = data.read(gicv::IAR::CPUID) as usize;
+            Some(VirtualAck::SGI { intid, cpu_id })
+        } else {
+            Some(VirtualAck::Normal(intid))
+        }
+    }
+
+    /// Signal end of virtual interrupt processing
+    pub fn eoi(&self, ack: VirtualAck) {
+        let val = match ack {
+            VirtualAck::Normal(intid) => gicv::EOIR::EOIINTID.val(intid.to_u32()),
+            VirtualAck::SGI { intid, cpu_id } => {
+                gicv::EOIR::EOIINTID.val(intid.to_u32()) + gicv::EOIR::CPUID.val(cpu_id as u32)
+            }
+        };
+        self.gicv().EOIR.write(val);
+    }
+
+    /// Deactivate a virtual interrupt
+    pub fn dir(&self, ack: VirtualAck) {
+        let val = match ack {
+            VirtualAck::Normal(intid) => gicv::DIR::InterruptID.val(intid.to_u32()),
+            VirtualAck::SGI { intid, cpu_id } => {
+                gicv::DIR::InterruptID.val(intid.to_u32()) + gicv::DIR::CPUID.val(cpu_id as u32)
+            }
+        };
+        self.gicv().DIR.write(val);
+    }
+
+    /// Get the highest priority pending virtual interrupt
+    pub fn get_highest_priority_pending(&self) -> u32 {
+        self.gicv().HPPIR.get() & 0x3FF
+    }
+
+    /// Get the current virtual running priority
+    pub fn get_running_priority(&self) -> u8 {
+        (self.gicv().RPR.get() & 0xFF) as u8
+    }
+
+    /// Set the virtual priority mask
+    pub fn set_priority_mask(&self, mask: u8) {
+        // Only bits [7:3] are used in virtual interface
+        self.gicv()
+            .PMR
+            .write(gicv::PMR::Priority.val((mask >> 3) as u32));
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MaintenanceInterruptType {
+    Underflow,
+    ListRegEntryNotPresent,
+    NoPending,
+    VGrp0Enable,
+    VGrp0Disable,
+    VGrp1Enable,
+    VGrp1Disable,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct VirtualInterruptConfig {
+    pub virtual_id: IntId,
+    pub priority: u8,
+    pub state: VirtualInterruptState,
+    pub group1: bool,
+    pub hw_interrupt: bool,
+    pub physical_id: Option<u32>,
+    pub cpu_id: Option<usize>,
+    pub eoi_maintenance: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum VirtualInterruptState {
+    Invalid = 0,
+    Pending = 1,
+    Active = 2,
+    PendingAndActive = 3,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum VirtualAck {
+    Normal(IntId),
+    SGI { intid: IntId, cpu_id: usize },
+}
+
+// Export public items
+pub use gich::HypervisorRegs;
+pub use gicv::VirtualCpuInterfaceReg;
