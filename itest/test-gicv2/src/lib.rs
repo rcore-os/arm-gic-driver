@@ -62,7 +62,8 @@ fn init_gic() {
 
     gic.init();
     debug!("GICv2 initialized successfully");
-    let cpu = gic.init_cpu_interface();
+    let mut cpu = gic.cpu_interface();
+    cpu.init_current_cpu();
     cpu.set_eoi_mode_ns(false);
     {
         *GIC.lock() = gic;
