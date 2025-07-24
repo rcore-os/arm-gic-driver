@@ -1,28 +1,44 @@
+use core::ptr::NonNull;
+
+use crate::VirtAddr;
 use log::trace;
-use tock_registers::{interfaces::*, LocalRegisterCopy};
+use tock_registers::{LocalRegisterCopy, interfaces::*};
 
 mod gicc;
 mod gicd;
 mod gich;
-mod gicv;
 
 use gicc::CpuInterfaceReg;
 use gicd::DistributorReg;
 use gich::HypervisorRegs;
-use gicv::VirtualCpuInterfaceReg;
 
 use crate::{
-    version::{IrqVecReadable, IrqVecWriteable},
     IntId,
+    version::{IrqVecReadable, IrqVecWriteable},
 };
 
 /// GICv2 driver. (support GICv1)
 pub struct Gic {
-    gicd: *mut DistributorReg,
-    gicc: *mut CpuInterfaceReg,
+    gicd: VirtAddr,
+    gicc: VirtAddr,
+    pub gich: Option<HypervisorInterface>, // Optional for GICv2
 }
 
 unsafe impl Send for Gic {}
+
+pub struct HyperAddress {
+    pub gich: VirtAddr,
+    pub gicv: VirtAddr,
+}
+
+impl HyperAddress {
+    pub fn new(gich: NonNull<u8>, gicv: NonNull<u8>) -> Self {
+        Self {
+            gich: gich.as_ptr() as _,
+            gicv: gicv.as_ptr() as _,
+        }
+    }
+}
 
 impl Gic {
     /// `gicd`: Distributor register base address. `gicc`: CPU interface register base address.
@@ -30,21 +46,44 @@ impl Gic {
     /// # Safety
     ///
     /// The caller must ensure that the provided pointers are valid and point to the correct GICv2 registers.
-    pub const unsafe fn new(gicd: *mut u8, gicc: *mut u8) -> Self {
+    pub const unsafe fn new(gicd: VirtAddr, gicc: VirtAddr, hyper: Option<HyperAddress>) -> Self {
         Self {
-            gicd: gicd as _,
-            gicc: gicc as _,
+            gicd,
+            gicc,
+            gich: match hyper {
+                Some(addr) => Some(unsafe {
+                    HypervisorInterface::new(addr.gich as *mut u8, addr.gicv as *mut u8)
+                }),
+                None => None,
+            },
+        }
+    }
+
+    pub fn new_with_non_null(
+        gicd: NonNull<u8>,
+        gicc: NonNull<u8>,
+        hyper: Option<HyperAddress>,
+    ) -> Self {
+        unsafe {
+            Self::new(
+                gicd.as_ptr() as _,
+                gicc.as_ptr() as _,
+                hyper.map(|h| HyperAddress {
+                    gich: h.gich,
+                    gicv: h.gicv,
+                }),
+            )
         }
     }
 
     fn gicd(&self) -> &DistributorReg {
-        unsafe { &*self.gicd }
+        unsafe { &*(self.gicd as *const _) }
     }
 
     pub fn init_cpu_interface(&self) -> CpuInterface {
         let mut c = CpuInterface {
-            gicd: self.gicd,
-            gicc: self.gicc,
+            gicd: self.gicd as _,
+            gicc: self.gicc as _,
         };
         c.init();
         c
@@ -53,7 +92,7 @@ impl Gic {
     /// Initialize the GIC according to GICv2 specification
     /// This includes both Distributor and CPU Interface initialization
     pub fn init(&mut self) {
-        trace!("Initializing GICv2 Distributor@{:#p}...", self.gicd);
+        trace!("Initializing GICv2 Distributor@{:#x}...", self.gicd);
         // 1. Disable the Distributor first
         self.gicd().disable();
 
@@ -199,6 +238,65 @@ impl Gic {
     pub fn is_pending(&self, id: IntId) -> bool {
         self.gicd().ISPENDR.get_irq_bit(id.into())
     }
+
+    pub fn gich_ref(&self) -> Option<&HypervisorInterface> {
+        self.gich.as_ref()
+    }
+
+    pub fn iidr_raw(&self) -> u32 {
+        self.gicd().IIDR.get()
+    }
+
+    pub fn typer_raw(&self) -> u32 {
+        self.gicd().TYPER.get()
+    }
+
+    pub fn set_cfg(&self, id: IntId, cfg: Trigger) {
+        let int_num = id.to_u32();
+        let reg_index = (int_num / 16) as usize;
+        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
+
+        assert!(
+            reg_index < self.gicd().ICFGR.len(),
+            "Invalid interrupt ID for config: {id:?}"
+        );
+
+        let current = self.gicd().ICFGR[reg_index].get();
+        let mask = 1 << bit_offset;
+
+        let new_value = match cfg {
+            Trigger::Level => current & !mask, // Clear bit for level-triggered
+            Trigger::Edge => current | mask,   // Set bit for edge-triggered
+        };
+
+        self.gicd().ICFGR[reg_index].set(new_value);
+    }
+
+    pub fn get_cfg(&self, id: IntId) -> Trigger {
+        let int_num = id.to_u32();
+        let reg_index = (int_num / 16) as usize;
+        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
+
+        assert!(
+            reg_index < self.gicd().ICFGR.len(),
+            "Invalid interrupt ID for config: {id:?}"
+        );
+
+        let current = self.gicd().ICFGR[reg_index].get();
+        let mask = 1 << bit_offset;
+
+        if current & mask != 0 {
+            Trigger::Edge
+        } else {
+            Trigger::Level
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Trigger {
+    Edge,
+    Level,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -473,6 +571,7 @@ impl CpuInterface {
 /// GIC Hypervisor Interface for virtualization support
 pub struct HypervisorInterface {
     gich: *mut HypervisorRegs,
+    gicv: *mut CpuInterfaceReg,
 }
 
 unsafe impl Send for HypervisorInterface {}
@@ -483,8 +582,11 @@ impl HypervisorInterface {
     /// # Safety
     ///
     /// The caller must ensure that the provided pointer is valid and points to the correct GICH registers.
-    pub const unsafe fn new(gich: *mut u8) -> Self {
-        Self { gich: gich as _ }
+    pub const unsafe fn new(gich: *mut u8, gicv: *mut u8) -> Self {
+        Self {
+            gich: gich as _,
+            gicv: gicv as _,
+        }
     }
 
     fn gich(&self) -> &HypervisorRegs {
@@ -505,6 +607,10 @@ impl HypervisorInterface {
 
         // Clear active priorities
         gich.APR.set(0);
+    }
+
+    pub fn gicv_address(&self) -> NonNull<u8> {
+        unsafe { NonNull::new_unchecked(self.gicv as *mut u8) }
     }
 
     /// Enable the virtual CPU interface
@@ -626,113 +732,6 @@ impl HypervisorInterface {
     }
 }
 
-/// GIC Virtual CPU Interface for guest VMs
-pub struct VirtualCpuInterface {
-    gicv: *mut VirtualCpuInterfaceReg,
-}
-
-unsafe impl Send for VirtualCpuInterface {}
-
-impl VirtualCpuInterface {
-    /// Create a new VirtualCpuInterface
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that the provided pointer is valid and points to the correct GICV registers.
-    pub const unsafe fn new(gicv: *mut u8) -> Self {
-        Self { gicv: gicv as _ }
-    }
-
-    fn gicv(&self) -> &VirtualCpuInterfaceReg {
-        unsafe { &*self.gicv }
-    }
-
-    /// Initialize the virtual CPU interface
-    pub fn init(&mut self) {
-        let gicv = self.gicv();
-
-        // Disable the interface first
-        gicv.CTLR.set(0);
-
-        // Set priority mask to allow all interrupts
-        gicv.PMR.write(gicv::PMR::Priority.val(0x1F)); // 5 bits for virtual interface
-
-        // Set binary point to default
-        gicv.BPR.write(gicv::BPR::BinaryPoint.val(0x2));
-        gicv.ABPR.write(gicv::ABPR::BinaryPoint.val(0x3));
-
-        // Enable both Group 0 and Group 1 virtual interrupts
-        gicv.CTLR
-            .write(gicv::CTLR::EnableGrp0::SET + gicv::CTLR::EnableGrp1::SET);
-    }
-
-    /// Set the EOI mode for virtual interrupts
-    pub fn set_eoi_mode(&self, is_two_step: bool) {
-        if is_two_step {
-            self.gicv().CTLR.modify(gicv::CTLR::EOImode::SET);
-        } else {
-            self.gicv().CTLR.modify(gicv::CTLR::EOImode::CLEAR);
-        }
-    }
-
-    /// Acknowledge a virtual interrupt
-    pub fn ack(&self) -> Option<VirtualAck> {
-        let data = self.gicv().IAR.extract();
-        let id = data.read(gicv::IAR::InterruptID);
-        if id == 1023 {
-            return None;
-        }
-
-        let intid = unsafe { IntId::raw(id) };
-        if intid.is_sgi() {
-            let cpu_id = data.read(gicv::IAR::CPUID) as usize;
-            Some(VirtualAck::SGI { intid, cpu_id })
-        } else {
-            Some(VirtualAck::Normal(intid))
-        }
-    }
-
-    /// Signal end of virtual interrupt processing
-    pub fn eoi(&self, ack: VirtualAck) {
-        let val = match ack {
-            VirtualAck::Normal(intid) => gicv::EOIR::EOIINTID.val(intid.to_u32()),
-            VirtualAck::SGI { intid, cpu_id } => {
-                gicv::EOIR::EOIINTID.val(intid.to_u32()) + gicv::EOIR::CPUID.val(cpu_id as u32)
-            }
-        };
-        self.gicv().EOIR.write(val);
-    }
-
-    /// Deactivate a virtual interrupt
-    pub fn dir(&self, ack: VirtualAck) {
-        let val = match ack {
-            VirtualAck::Normal(intid) => gicv::DIR::InterruptID.val(intid.to_u32()),
-            VirtualAck::SGI { intid, cpu_id } => {
-                gicv::DIR::InterruptID.val(intid.to_u32()) + gicv::DIR::CPUID.val(cpu_id as u32)
-            }
-        };
-        self.gicv().DIR.write(val);
-    }
-
-    /// Get the highest priority pending virtual interrupt
-    pub fn get_highest_priority_pending(&self) -> u32 {
-        self.gicv().HPPIR.get() & 0x3FF
-    }
-
-    /// Get the current virtual running priority
-    pub fn get_running_priority(&self) -> u8 {
-        (self.gicv().RPR.get() & 0xFF) as u8
-    }
-
-    /// Set the virtual priority mask
-    pub fn set_priority_mask(&self, mask: u8) {
-        // Only bits [7:3] are used in virtual interface
-        self.gicv()
-            .PMR
-            .write(gicv::PMR::Priority.val((mask >> 3) as u32));
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum MaintenanceInterruptType {
     Underflow,
@@ -763,13 +762,3 @@ pub enum VirtualInterruptState {
     Active = 2,
     PendingAndActive = 3,
 }
-
-#[derive(Debug, Clone, Copy)]
-pub enum VirtualAck {
-    Normal(IntId),
-    SGI { intid: IntId, cpu_id: usize },
-}
-
-// Export public items
-pub use gich::HypervisorRegs;
-pub use gicv::VirtualCpuInterfaceReg;

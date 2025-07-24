@@ -12,3 +12,5 @@ mod version;
 pub use define::IntId;
 pub use rdif_intc::*;
 pub use version::*;
+
+pub type VirtAddr = usize;
