@@ -1,16 +1,42 @@
+use core::ptr::NonNull;
+
+use aarch64_cpu::{
+    asm::barrier,
+    registers::{CurrentEL, MPIDR_EL1},
+};
+use log::*;
+use tock_registers::{LocalRegisterCopy, interfaces::*};
+
+macro_rules! cpu_read {
+    ($name: expr) => {{
+        let x: usize;
+        unsafe {
+            core::arch::asm!(concat!("mrs {}, ", $name), out(reg) x);
+        }
+        x
+    }};
+}
+
+macro_rules! cpu_write {
+    ($name: expr, $value: expr) => {{
+        let x = $value;
+        unsafe {
+            core::arch::asm!(concat!("msr ", $name, ", {0:x}"), in(reg) x);
+        }
+    }};
+}
+
 pub mod gicc;
 mod gicd;
 mod gicr;
 
-use core::ptr::NonNull;
-
-use aarch64_cpu::{asm::barrier, registers::MPIDR_EL1};
-use log::*;
-use tock_registers::{LocalRegisterCopy, interfaces::*};
-
-use crate::VirtAddr;
+use crate::{VirtAddr, v3::gicc::enable_group1};
 use gicd::*;
 use gicr::*;
+
+const GICC_SRE_SRE: usize = 1 << 0;
+const GICC_SRE_DFB: usize = 1 << 1;
+const GICC_SRE_DIB: usize = 1 << 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CPUTarget {
@@ -194,16 +220,28 @@ impl CpuInterface {
     }
 
     /// Initialize the CPU interface for the current CPU
+    ///
+    /// This follows the GICv3 architecture specification for CPU interface initialization:
+    /// 1. Wake up the Redistributor
+    /// 2. Initialize SGI/PPI registers to known state
+    /// 3. Configure CPU interface registers
     pub fn init_current_cpu(&mut self) -> Result<(), &'static str> {
-        let lpi = self.rd().lpi_ref();
+        let cpu = CPUTarget::current();
+        trace!(
+            "CPU interface initialization for CPU: {:#x}",
+            cpu.affinity()
+        );
 
+        // 1. Wake up the Redistributor first
+        self.rd().lpi.wake()?;
 
-        self.rd().lpi.wake();
-        self.rd().sgi.ICENABLER0.set(u32::MAX);
-        rd.sgi.ICPENDR0.set(u32::MAX);
-        rd.sgi.IGROUPR0.set(u32::MAX);
-        rd.sgi.IGRPMODR0.set(u32::MAX);
+        // 2. Initialize SGI/PPI registers with proper sequence
+        self.rd().sgi.init_sgi_ppi(self.security_state);
 
+        // Wait for register writes to complete
+        self.rd().lpi.wait_for_rwp()?;
+
+        // 3. Configure CPU interface system registers
         if CurrentEL.read(CurrentEL::EL) == 2 {
             let mut reg = cpu_read!("ICC_SRE_EL2");
             reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
@@ -216,11 +254,31 @@ impl CpuInterface {
             }
         }
 
+        // 4. Set interrupt priority mask to allow all priorities
         cpu_write!("ICC_PMR_EL1", 0xFF);
-        enable_group1();
-        const GICC_CTLR_CBPR: usize = 1 << 0;
-        cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
 
+        // 5. Enable Group 1 interrupts
+        enable_group1();
+
+        // 6. Configure control register based on security state
+        match self.security_state {
+            SecurityState::Single => {
+                // In single security state, use CBPR (Common Binary Point Register)
+                const GICC_CTLR_CBPR: usize = 1 << 0;
+                cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
+            }
+            SecurityState::Secure => {
+                // In secure state, don't set CBPR to allow separate binary point registers
+                cpu_write!("ICC_CTLR_EL1", 0);
+            }
+            SecurityState::NonSecure => {
+                // In non-secure state, use CBPR
+                const GICC_CTLR_CBPR: usize = 1 << 0;
+                cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
+            }
+        }
+
+        trace!("CPU interface initialized successfully");
         Ok(())
     }
 }

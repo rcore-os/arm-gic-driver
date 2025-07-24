@@ -7,7 +7,7 @@ use spin::Mutex;
 use test_base::{somehal::mem::iomap, *};
 static GIC: Mutex<v3::Gic> =
     Mutex::new(unsafe { v3::Gic::new(VirtAddr::new(0), VirtAddr::new(0)) });
-static CPU_IF: Mutex<Option<v2::CpuInterface>> = Mutex::new(None);
+static CPU_IF: Mutex<Option<v3::CpuInterface>> = Mutex::new(None);
 
 #[somehal::entry]
 fn main(_args: &somehal::BootInfo) -> ! {
@@ -43,7 +43,7 @@ fn init_gic() {
 
     gic.init();
     let mut cpu = gic.cpu_interface();
-    cpu.init_current_cpu();
+    cpu.init_current_cpu().unwrap();
     // cpu.set_eoi_mode_ns(false);
     {
         *GIC.lock() = gic;

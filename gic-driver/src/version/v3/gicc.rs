@@ -1,21 +1,4 @@
-macro_rules! cpu_read {
-    ($name: expr) => {{
-        let x: usize;
-        unsafe {
-            core::arch::asm!(concat!("mrs {}, ", $name), out(reg) x);
-        }
-        x
-    }};
-}
 
-macro_rules! cpu_write {
-    ($name: expr, $value: expr) => {{
-        let x = $value;
-        unsafe {
-            core::arch::asm!(concat!("msr ", $name, ", {0:x}"), in(reg) x);
-        }
-    }};
-}
 
 /// Set the EOI mode for non-secure interrupts
 ///
