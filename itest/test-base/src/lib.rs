@@ -19,6 +19,7 @@ pub const TEST_SUCCESS: &str = "All tests passed!";
 
 pub fn init_test() {
     init_log();
+    info!("boot_info: {:#?}", boot_info());
     mem::init_this();
     info!("begin test");
 }

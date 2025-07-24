@@ -1,12 +1,12 @@
 #![no_std]
 #![cfg(target_os = "none")]
 
-use core::sync::atomic::{AtomicBool, Ordering};
-
-use arm_gic_driver::v3::{self};
+use arm_gic_driver::{VirtAddr, v3};
 use log::{debug, info};
 use spin::Mutex;
 use test_base::{somehal::mem::iomap, *};
+static GIC: Mutex<v3::Gic> =
+    Mutex::new(unsafe { v3::Gic::new(VirtAddr::new(0), VirtAddr::new(0)) });
 
 #[somehal::entry]
 fn main(_args: &somehal::BootInfo) -> ! {
@@ -38,7 +38,12 @@ fn init_gic() {
     let gicc_base = iomap(gicr_base.address as _, gicr_base.size.unwrap_or_default())
         .expect("Failed to map GICC base address");
 
-   
+    let mut gic = unsafe { v3::Gic::new(gicd_base.into(), gicc_base.into()) };
+
+    gic.init();
+
+    *GIC.lock() = gic;
+
     // 启用CPU全局中断
     unsafe {
         core::arch::asm!("msr daifclr, #2"); // 清除IRQ mask (bit 1)

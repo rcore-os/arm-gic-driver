@@ -26,21 +26,6 @@ pub fn init_this() {
             break;
         }
     }
-    for ram in boot_info()
-        .memory_regions
-        .iter()
-        .filter(|r| matches!(r.kind, MemoryRegionKind::Ram))
-    {
-        let start = ram.start;
-        let end = ram.end;
-        if !(start..end).contains(&main_start) {
-            let start = phys_to_virt(main_start) as usize;
-            let end = phys_to_virt(end) as usize;
-            let size = end - start;
-            debug!("Adding to heap allocator: start={start:#x}, size={size:#x}");
-            unsafe { HEAP_ALLOCATOR.lock().add_to_heap(start, size) };
-        }
-    }
 
     init();
 }

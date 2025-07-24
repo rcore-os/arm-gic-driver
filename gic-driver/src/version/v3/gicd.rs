@@ -2,13 +2,50 @@
 #![allow(clippy::unnecessary_cast)]
 #![allow(clippy::manual_range_contains)]
 
+use core::hint::spin_loop;
+
+use aarch64_cpu::asm::barrier;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
+
+/// Access context for CTLR register operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecurityState {
+    /// Access from Secure state in two security states configuration
+    Secure,
+    /// Access from Non-secure state in two security states configuration  
+    NonSecure,
+    /// Access in single security state configuration
+    Single,
+}
+
+/// Distributor status information
+#[derive(Debug, Clone)]
+pub struct DistributorStatus {
+    /// Whether current access is from Secure state
+    pub is_secure_access: bool,
+    /// Whether security extensions are implemented
+    pub has_security_extensions: bool,
+    /// Maximum number of SPIs supported
+    pub max_spis: u32,
+    /// Maximum number of CPUs supported
+    pub max_cpus: u32,
+    /// Maximum interrupt ID supported
+    pub max_intid: u32,
+    /// Whether LPIs are supported
+    pub has_lpis: bool,
+    /// Whether message-based SPIs are supported
+    pub has_message_based_spi: bool,
+    /// Whether affinity routing is enabled for Secure state
+    pub affinity_routing_enabled_secure: bool,
+    /// Whether affinity routing is enabled for Non-secure state
+    pub affinity_routing_enabled_nonsecure: bool,
+}
 
 register_structs! {
     #[allow(non_snake_case)]
     pub DistributorReg {
         /// Distributor Control Register.
-        (0x0000 => pub CTLR: ReadWrite<u32, CTLR::Register>),
+        (0x0000 => pub CTLR: ReadWrite<u32, CTLR_BASE::Register>),
         /// Interrupt Controller Type Register.
         (0x0004 => pub TYPER: ReadOnly<u32, TYPER::Register>),
         /// Distributor Implementer Identification Register.
@@ -74,58 +111,128 @@ register_structs! {
 }
 
 impl DistributorReg {
-    /// Disable the GIC Distributor
-    pub fn disable(&self) {
-        self.CTLR
-            .modify(CTLR::EnableGrp0::CLEAR + CTLR::EnableGrp1NS::CLEAR + CTLR::EnableGrp1S::CLEAR);
-    }
+    // /// Enable the GIC Distributor (security-aware)
+    // pub fn enable(&self) {
+    //     match self.get_security_config() {
+    //         SecurityConfig::SingleSecurityState => {
+    //             // Enable both Group 0 and Group 1 for single security state
+    //             self.enable_groups_single_security(true, true);
+    //         }
+    //         SecurityConfig::TwoSecurityStates => {
+    //             // Enable all groups for two security states
+    //             self.enable_groups_two_security_secure(true, true, true);
+    //         }
+    //     }
+    // }
 
-    /// Enable the GIC Distributor
-    pub fn enable(&self) {
-        self.CTLR
-            .modify(CTLR::EnableGrp0::SET + CTLR::EnableGrp1NS::SET + CTLR::EnableGrp1S::SET);
-    }
-
-    /// Enable the GIC Distributor for specific interrupt groups
-    pub fn enable_groups(&self, grp0: bool, grp1_ns: bool, grp1_s: bool) {
-        let mut ctlr =
-            CTLR::EnableGrp0::CLEAR + CTLR::EnableGrp1NS::CLEAR + CTLR::EnableGrp1S::CLEAR;
-
-        if grp0 {
-            ctlr += CTLR::EnableGrp0::SET;
-        }
-        if grp1_ns {
-            ctlr += CTLR::EnableGrp1NS::SET;
-        }
-        if grp1_s {
-            ctlr += CTLR::EnableGrp1S::SET;
-        }
-
-        self.CTLR.modify(ctlr);
-    }
-
-    /// Enable affinity routing for specified security state
-    pub fn enable_affinity_routing(&self, secure: bool) {
-        if secure {
-            self.CTLR.modify(CTLR::ARE_S::SET);
+    pub fn get_security_state(&self) -> SecurityState {
+        if self.is_single_security_state() {
+            SecurityState::Single
         } else {
-            self.CTLR.modify(CTLR::ARE_NS::SET);
+            // In two security states configuration, use GICD_NSACR access behavior to determine security state
+            // According to ARM GIC specification:
+            // - When DS == 0 and access is Secure: GICD_NSACR is RW
+            // - When DS == 0 and access is Non-secure: GICD_NSACR is RAZ/WI
+            self.detect_security_state_via_nsacr()
         }
     }
+
+    // /// Enable the GIC Distributor for specific interrupt groups (legacy method)
+    // /// This method is kept for backward compatibility and automatically adapts to security configuration
+    // pub fn enable_groups(&self, grp0: bool, grp1_ns: bool, grp1_s: bool) {
+    //     match self.get_security_config() {
+    //         SecurityConfig::SingleSecurityState => {
+    //             // In single security state, map grp1_ns to the general Group 1
+    //             // grp1_s is ignored in single security state
+    //             self.enable_groups_single_security(grp0, grp1_ns);
+    //         }
+    //         SecurityConfig::TwoSecurityStates => {
+    //             self.enable_groups_two_security_secure(grp0, grp1_ns, grp1_s);
+    //         }
+    //     }
+    // }
+
+    // /// Enable affinity routing for specified security state (legacy method)
+    // /// This method is kept for backward compatibility
+    // pub fn enable_affinity_routing(&self, secure: bool) {
+    //     match self.get_security_config() {
+    //         SecurityConfig::SingleSecurityState => {
+    //             // In single security state, ignore the secure parameter
+    //             self.enable_affinity_routing_single_security();
+    //         }
+    //         SecurityConfig::TwoSecurityStates => {
+    //             if secure {
+    //                 self.CTLR.modify(CTLR::ARE_S::SET);
+    //             } else {
+    //                 self.CTLR.modify(CTLR::ARE_NS::SET);
+    //             }
+    //             self.wait_for_rwp();
+    //         }
+    //     }
+    // }
 
     /// Check if single security state is configured
     pub fn is_single_security_state(&self) -> bool {
-        self.CTLR.is_set(CTLR::DS)
+        self.CTLR.is_set(CTLR_BASE::DS)
     }
 
-    /// Check if affinity routing is enabled for specified security state
-    pub fn is_affinity_routing_enabled(&self, secure: bool) -> bool {
-        if secure {
-            self.CTLR.is_set(CTLR::ARE_S)
+    /// Detect security state using GICD_NSACR access behavior
+    ///
+    /// According to ARM GIC specification for GICD_NSACR<n> registers:
+    /// - When GICD_CTLR.DS == 0 and access is Secure: RW access
+    /// - When GICD_CTLR.DS == 0 and access is Non-secure: RAZ/WI access
+    ///
+    /// This method attempts to write to GICD_NSACR0 and reads it back.
+    /// If the written value persists, we're in Secure state.
+    /// If it reads as zero, we're in Non-secure state.
+    fn detect_security_state_via_nsacr(&self) -> SecurityState {
+        // Only valid in two security states configuration
+        if self.is_single_security_state() {
+            return SecurityState::Single;
+        }
+
+        // Read current value of GICD_NSACR0
+        let original_value = self.NSACR[0].get();
+
+        // Test pattern - use a value that won't affect system operation
+        // We use bit 1 (for interrupt 1, which is a PPI and ignored by NSACR anyway)
+        let test_pattern = 0x00000002u32;
+
+        // Write test pattern to GICD_NSACR0
+        self.NSACR[0].set(test_pattern);
+
+        // Read back the value
+        let read_value = self.NSACR[0].get();
+
+        // Restore original value
+        self.NSACR[0].set(original_value);
+
+        // Determine security state based on read-back behavior
+        if read_value == test_pattern {
+            // Write succeeded and persisted - we're in Secure state
+            SecurityState::Secure
         } else {
-            self.CTLR.is_set(CTLR::ARE_NS)
+            // Write was ignored (RAZ/WI behavior) - we're in Non-secure state
+            SecurityState::NonSecure
         }
     }
+
+    // /// Check if affinity routing is enabled for specified security state
+    // pub fn is_affinity_routing_enabled(&self, secure: bool) -> bool {
+    //     match self.get_security_config() {
+    //         SecurityConfig::SingleSecurityState => {
+    //             // In single security state, check ARE_NS bit (which acts as the general ARE bit)
+    //             self.CTLR.is_set(CTLR::ARE_NS)
+    //         }
+    //         SecurityConfig::TwoSecurityStates => {
+    //             if secure {
+    //                 self.CTLR.is_set(CTLR::ARE_S)
+    //             } else {
+    //                 self.CTLR.is_set(CTLR::ARE_NS)
+    //             }
+    //         }
+    //     }
+    // }
 
     /// Get the maximum number of supported INTIDs
     pub fn max_intid(&self) -> u32 {
@@ -457,11 +564,9 @@ impl DistributorReg {
         self.TYPER.read(TYPER::DVIS) != 0
     }
 
-    /// Initialize the distributor with default settings
-    pub fn init(&self) {
-        // Disable all groups first
-        self.disable();
-
+    /// Initialize for two security states configuration (from Secure state)
+    /// This handles the case where DS=0 and security extensions are present
+    pub fn reset_registers(&self) {
         // Get the maximum number of interrupts
         let max_spis = self.max_spi_num();
 
@@ -472,7 +577,7 @@ impl DistributorReg {
         // Disable all interrupts
         self.irq_disable_all(max_spis);
 
-        // Set all interrupts to Group 0 by default
+        // Set all interrupts to Group 1 by default
         self.groups_all_to_1(max_spis);
 
         // Set default priorities
@@ -480,43 +585,59 @@ impl DistributorReg {
 
         // Configure all interrupts as level-sensitive
         self.configure_interrupt_config(max_spis);
+    }
 
-        // Enable affinity routing for both security states if supported
-        if self.has_security_extensions() {
-            self.enable_affinity_routing(true); // Secure
-            self.enable_affinity_routing(false); // Non-secure
-        } else {
-            self.enable_affinity_routing(false); // Single security state
+    /// Wait for register write pending to clear
+    pub fn wait_for_rwp(&self) -> Result<(), &'static str> {
+        let mut time_out_count = 10000;
+        while self.CTLR.is_set(CTLR_BASE::RWP) {
+            spin_loop();
+            time_out_count -= 1;
+            if time_out_count == 0 {
+                return Err("GICv3 Distributor CTLR RWP wait timeout.");
+            }
         }
+        barrier::isb(barrier::SY);
+        Ok(())
     }
 }
 
 register_bitfields! [
     u32,
-    /// Distributor Control Register
-    pub CTLR [
-        /// Enable Group 0 interrupts
-        EnableGrp0 OFFSET(0) NUMBITS(1) [],
-        /// Enable Group 1 Non-secure interrupts
-        EnableGrp1NS OFFSET(1) NUMBITS(1) [],
-        /// Enable Group 1 Secure interrupts
-        EnableGrp1S OFFSET(2) NUMBITS(1) [],
-        /// Disable Security (single security state)
+    /// GICD_CTLR register - unified bitfield covering all security configurations
+    pub CTLR_BASE [
+        /// Disable Security - single security state when set
         DS OFFSET(6) NUMBITS(1) [
             TwoSecurityStates = 0,
             SingleSecurityState = 1,
         ],
-        /// Affinity Routing Enable for Non-secure state
-        ARE_NS OFFSET(4) NUMBITS(1) [
-            Disable = 0,
-            Enable = 1,
-        ],
-        /// Affinity Routing Enable for Secure state
-        ARE_S OFFSET(5) NUMBITS(1) [
-            Disable = 0,
-            Enable = 1,
-        ],
-        /// Register Write Pending
+        /// Register Write Pending - read only
+        RWP OFFSET(31) NUMBITS(1) [],
+    ],
+
+    pub CTLR_S [
+        EnableGrp0 OFFSET(0) NUMBITS(1) [],
+        EnableGrp1NS OFFSET(1) NUMBITS(1) [],
+        EnableGrp1S OFFSET(2) NUMBITS(1) [],
+        ARE_S OFFSET(4) NUMBITS(1) [],
+        ARE_NS OFFSET(5) NUMBITS(1) [],
+        DS OFFSET(6) NUMBITS(1) [],
+        E1NWF OFFSET(7) NUMBITS(1) [],
+        RWP OFFSET(31) NUMBITS(1) [],
+    ],
+    pub CTLR_NS [
+        EnableGrp1 OFFSET(0) NUMBITS(1) [],
+        EnableGrp1A OFFSET(1) NUMBITS(1) [],
+        ARE_NS OFFSET(4) NUMBITS(1) [],
+        RWP OFFSET(31) NUMBITS(1) [],
+    ],
+    pub CTLR_ONE [
+        EnableGrp0 OFFSET(0) NUMBITS(1) [],
+        EnableGrp1 OFFSET(1) NUMBITS(1) [],
+        ARE OFFSET(4) NUMBITS(1) [],
+        DS OFFSET(6) NUMBITS(1) [],
+        E1NWF OFFSET(7) NUMBITS(1) [],
+        nASSGIreq OFFSET(8) NUMBITS(1) [],
         RWP OFFSET(31) NUMBITS(1) [],
     ],
 
