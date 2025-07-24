@@ -3,71 +3,17 @@ use core::{
     ops::Range,
 };
 
-use rdif_intc::IrqId;
-
-#[derive(Clone, Copy)]
-pub enum SGITarget<'a> {
-    AllOther,
-    Targets(&'a [CPUTarget]),
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Trigger {
+    Edge,
+    Level,
 }
 
-#[derive(Clone, Copy)]
-pub struct CPUTarget {
-    pub aff0: u8,
-    pub aff1: u8,
-    pub aff2: u8,
-    pub aff3: u8,
-}
-
-impl From<MPID> for CPUTarget {
-    fn from(value: MPID) -> Self {
-        Self {
-            aff0: value.aff0,
-            aff1: value.aff1,
-            aff2: value.aff2,
-            aff3: value.aff3 as _,
-        }
-    }
-}
-impl CPUTarget {
-    pub const CORE0: CPUTarget = CPUTarget {
-        aff0: 0,
-        aff1: 0,
-        aff2: 0,
-        aff3: 0,
-    };
-
-    pub(crate) fn affinity(&self) -> u32 {
-        self.aff0 as u32
-            | ((self.aff1 as u32) << 8)
-            | ((self.aff2 as u32) << 16)
-            | ((self.aff3 as u32) << 24)
-    }
-
-    pub(crate) fn cpu_target_list(&self) -> u8 {
-        1 << self.aff0
-    }
-}
-#[allow(clippy::upper_case_acronyms)]
-#[repr(C)]
-pub struct MPID {
-    pub aff0: u8,
-    pub aff1: u8,
-    pub aff2: u8,
-    _flag: u8,
-    pub aff3: u32,
-}
-
-impl From<u64> for MPID {
-    fn from(value: u64) -> Self {
-        unsafe { core::mem::transmute(value) }
-    }
-}
-
-impl From<usize> for MPID {
-    fn from(value: usize) -> Self {
-        unsafe { core::mem::transmute(value) }
-    }
+/// The configuration for setup an interrupt.
+#[derive(Debug, Clone)]
+pub struct IrqConfig {
+    pub id: IntId,
+    pub trigger: Trigger,
 }
 
 /// Interrupt ID 0-15 are used for SGIs (Software-generated interrupt).
@@ -152,12 +98,7 @@ impl Debug for IntId {
         }
     }
 }
-impl From<IrqId> for IntId {
-    fn from(id: IrqId) -> Self {
-        let id: usize = id.into();
-        Self(id as _)
-    }
-}
+
 impl From<IntId> for u32 {
     fn from(intid: IntId) -> Self {
         intid.0

@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use crate::VirtAddr;
+use crate::{VirtAddr, define::Trigger};
 use log::trace;
 use tock_registers::{LocalRegisterCopy, interfaces::*};
 
@@ -296,12 +296,6 @@ impl Gic {
             Trigger::Level
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Trigger {
-    Edge,
-    Level,
 }
 
 #[derive(Debug, Clone, Copy)]
