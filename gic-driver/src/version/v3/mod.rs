@@ -1,15 +1,48 @@
 pub mod gicc;
 mod gicd;
+mod gicr;
 
-use aarch64_cpu::asm::barrier;
-pub use gicd::*;
+use core::ptr::NonNull;
 
+use aarch64_cpu::{asm::barrier, registers::MPIDR_EL1};
 use log::*;
-use tock_registers::interfaces::*;
+use tock_registers::{LocalRegisterCopy, interfaces::*};
 
 use crate::VirtAddr;
+use gicd::*;
+use gicr::*;
 
-/// GICv3 driver. (support GICv1)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CPUTarget {
+    pub aff0: u8,
+    pub aff1: u8,
+    pub aff2: u8,
+    pub aff3: u8,
+}
+
+impl CPUTarget {
+    pub(crate) fn affinity(&self) -> u32 {
+        self.aff0 as u32
+            | ((self.aff1 as u32) << 8)
+            | ((self.aff2 as u32) << 16)
+            | ((self.aff3 as u32) << 24)
+    }
+    pub fn from_mpidr(mpidr: u64) -> Self {
+        let val = LocalRegisterCopy::<u64, MPIDR_EL1::Register>::new(mpidr);
+        Self {
+            aff0: val.read(MPIDR_EL1::Aff0) as u8,
+            aff1: val.read(MPIDR_EL1::Aff1) as u8,
+            aff2: val.read(MPIDR_EL1::Aff2) as u8,
+            aff3: val.read(MPIDR_EL1::Aff3) as u8,
+        }
+    }
+
+    pub fn current() -> Self {
+        Self::from_mpidr(MPIDR_EL1.get())
+    }
+}
+
+/// GICv3 driver.
 pub struct Gic {
     gicd: VirtAddr,
     #[allow(dead_code)]
@@ -118,5 +151,76 @@ impl Gic {
         };
         self.gicd().CTLR.set(old & !val);
         barrier::isb(barrier::SY);
+    }
+
+    fn rd_slice(&self) -> RDv3Slice {
+        RDv3Slice::new(unsafe { NonNull::new_unchecked(self.gicr.as_ptr()) })
+    }
+
+    fn current_rd(&self) -> NonNull<RedistributorV3> {
+        let want = (MPIDR_EL1.get() & 0xFFF) as u32;
+
+        for rd in self.rd_slice().iter() {
+            let affi = unsafe { rd.as_ref() }
+                .lpi_ref()
+                .TYPER
+                .read(gicr::TYPER::Affinity) as u32;
+            if affi == want {
+                return rd;
+            }
+        }
+        panic!("No current redistributor")
+    }
+
+    pub fn cpu_interface(&self) -> CpuInterface {
+        CpuInterface {
+            rd: self.current_rd().as_ptr(),
+            security_state: self.security_state,
+        }
+    }
+}
+
+/// Every CPU interface has its own GICC registers
+pub struct CpuInterface {
+    rd: *mut RedistributorV3,
+    security_state: SecurityState,
+}
+
+unsafe impl Send for CpuInterface {}
+
+impl CpuInterface {
+    fn rd(&self) -> &RedistributorV3 {
+        unsafe { &*self.rd }
+    }
+
+    /// Initialize the CPU interface for the current CPU
+    pub fn init_current_cpu(&mut self) -> Result<(), &'static str> {
+        let lpi = self.rd().lpi_ref();
+
+
+        self.rd().lpi.wake();
+        self.rd().sgi.ICENABLER0.set(u32::MAX);
+        rd.sgi.ICPENDR0.set(u32::MAX);
+        rd.sgi.IGROUPR0.set(u32::MAX);
+        rd.sgi.IGRPMODR0.set(u32::MAX);
+
+        if CurrentEL.read(CurrentEL::EL) == 2 {
+            let mut reg = cpu_read!("ICC_SRE_EL2");
+            reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
+            cpu_write!("ICC_SRE_EL2", reg);
+        } else {
+            let mut reg = cpu_read!("ICC_SRE_EL1");
+            if (reg & GICC_SRE_SRE) == 0 {
+                reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
+                cpu_write!("ICC_SRE_EL1", reg);
+            }
+        }
+
+        cpu_write!("ICC_PMR_EL1", 0xFF);
+        enable_group1();
+        const GICC_CTLR_CBPR: usize = 1 << 0;
+        cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
+
+        Ok(())
     }
 }

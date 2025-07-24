@@ -1,7 +1,3 @@
-#![allow(dead_code)]
-#![allow(clippy::unnecessary_cast)]
-#![allow(clippy::manual_range_contains)]
-
 use core::hint::spin_loop;
 
 use aarch64_cpu::asm::barrier;
@@ -16,29 +12,6 @@ pub enum SecurityState {
     NonSecure,
     /// Access in single security state configuration
     Single,
-}
-
-/// Distributor status information
-#[derive(Debug, Clone)]
-pub struct DistributorStatus {
-    /// Whether current access is from Secure state
-    pub is_secure_access: bool,
-    /// Whether security extensions are implemented
-    pub has_security_extensions: bool,
-    /// Maximum number of SPIs supported
-    pub max_spis: u32,
-    /// Maximum number of CPUs supported
-    pub max_cpus: u32,
-    /// Maximum interrupt ID supported
-    pub max_intid: u32,
-    /// Whether LPIs are supported
-    pub has_lpis: bool,
-    /// Whether message-based SPIs are supported
-    pub has_message_based_spi: bool,
-    /// Whether affinity routing is enabled for Secure state
-    pub affinity_routing_enabled_secure: bool,
-    /// Whether affinity routing is enabled for Non-secure state
-    pub affinity_routing_enabled_nonsecure: bool,
 }
 
 register_structs! {
@@ -111,20 +84,6 @@ register_structs! {
 }
 
 impl DistributorReg {
-    // /// Enable the GIC Distributor (security-aware)
-    // pub fn enable(&self) {
-    //     match self.get_security_config() {
-    //         SecurityConfig::SingleSecurityState => {
-    //             // Enable both Group 0 and Group 1 for single security state
-    //             self.enable_groups_single_security(true, true);
-    //         }
-    //         SecurityConfig::TwoSecurityStates => {
-    //             // Enable all groups for two security states
-    //             self.enable_groups_two_security_secure(true, true, true);
-    //         }
-    //     }
-    // }
-
     pub fn get_security_state(&self) -> SecurityState {
         if self.is_single_security_state() {
             SecurityState::Single
@@ -136,40 +95,6 @@ impl DistributorReg {
             self.detect_security_state_via_nsacr()
         }
     }
-
-    // /// Enable the GIC Distributor for specific interrupt groups (legacy method)
-    // /// This method is kept for backward compatibility and automatically adapts to security configuration
-    // pub fn enable_groups(&self, grp0: bool, grp1_ns: bool, grp1_s: bool) {
-    //     match self.get_security_config() {
-    //         SecurityConfig::SingleSecurityState => {
-    //             // In single security state, map grp1_ns to the general Group 1
-    //             // grp1_s is ignored in single security state
-    //             self.enable_groups_single_security(grp0, grp1_ns);
-    //         }
-    //         SecurityConfig::TwoSecurityStates => {
-    //             self.enable_groups_two_security_secure(grp0, grp1_ns, grp1_s);
-    //         }
-    //     }
-    // }
-
-    // /// Enable affinity routing for specified security state (legacy method)
-    // /// This method is kept for backward compatibility
-    // pub fn enable_affinity_routing(&self, secure: bool) {
-    //     match self.get_security_config() {
-    //         SecurityConfig::SingleSecurityState => {
-    //             // In single security state, ignore the secure parameter
-    //             self.enable_affinity_routing_single_security();
-    //         }
-    //         SecurityConfig::TwoSecurityStates => {
-    //             if secure {
-    //                 self.CTLR.modify(CTLR::ARE_S::SET);
-    //             } else {
-    //                 self.CTLR.modify(CTLR::ARE_NS::SET);
-    //             }
-    //             self.wait_for_rwp();
-    //         }
-    //     }
-    // }
 
     /// Check if single security state is configured
     pub fn is_single_security_state(&self) -> bool {
@@ -216,23 +141,6 @@ impl DistributorReg {
             SecurityState::NonSecure
         }
     }
-
-    // /// Check if affinity routing is enabled for specified security state
-    // pub fn is_affinity_routing_enabled(&self, secure: bool) -> bool {
-    //     match self.get_security_config() {
-    //         SecurityConfig::SingleSecurityState => {
-    //             // In single security state, check ARE_NS bit (which acts as the general ARE bit)
-    //             self.CTLR.is_set(CTLR::ARE_NS)
-    //         }
-    //         SecurityConfig::TwoSecurityStates => {
-    //             if secure {
-    //                 self.CTLR.is_set(CTLR::ARE_S)
-    //             } else {
-    //                 self.CTLR.is_set(CTLR::ARE_NS)
-    //             }
-    //         }
-    //     }
-    // }
 
     /// Get the maximum number of supported INTIDs
     pub fn max_intid(&self) -> u32 {
@@ -404,7 +312,7 @@ impl DistributorReg {
         if intid >= 32 {
             // Only SPIs can be controlled via distributor
             let reg_idx = (intid / 16) as usize; // 16 interrupts per register
-            let bit_idx = ((intid % 16) * 2 + 1) as u32; // Each interrupt uses 2 bits, we use bit 1
+            let bit_idx = (intid % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1
 
             if reg_idx < self.ICFGR.len() {
                 let current = self.ICFGR[reg_idx].get();
@@ -438,7 +346,7 @@ impl DistributorReg {
         aff0: u8,
         routing_mode: bool,
     ) {
-        if intid >= 32 && intid < 1020 {
+        if (32..1020).contains(&intid) {
             // Calculate IROUTER register index
             // IROUTER registers start at SPI 32, so subtract 32
             let router_idx = (intid - 32) as usize;
@@ -461,7 +369,7 @@ impl DistributorReg {
 
     /// Get interrupt routing information
     pub fn get_interrupt_route(&self, intid: u32) -> Option<(u8, u8, u8, u8, bool)> {
-        if intid >= 32 && intid < 1020 {
+        if (32..1020).contains(&intid) {
             let router_idx = (intid - 32) as usize;
 
             if router_idx < self.IROUTER.len() {
@@ -480,35 +388,35 @@ impl DistributorReg {
 
     /// Generate message-based SPI (Non-secure)
     pub fn generate_spi_ns(&self, intid: u32) {
-        if intid >= 32 && intid < 1020 {
+        if (32..1020).contains(&intid) {
             self.SETSPI_NSR.write(SETSPI_NSR::INTID.val(intid));
         }
     }
 
     /// Generate message-based SPI (Secure)
     pub fn generate_spi_s(&self, intid: u32) {
-        if intid >= 32 && intid < 1020 {
+        if (32..1020).contains(&intid) {
             self.SETSPI_SR.write(SETSPI_SR::INTID.val(intid));
         }
     }
 
     /// Clear message-based SPI (Non-secure)
     pub fn clear_spi_ns(&self, intid: u32) {
-        if intid >= 32 && intid < 1020 {
+        if (32..1020).contains(&intid) {
             self.CLRSPI_NSR.write(CLRSPI_NSR::INTID.val(intid));
         }
     }
 
     /// Clear message-based SPI (Secure)
     pub fn clear_spi_s(&self, intid: u32) {
-        if intid >= 32 && intid < 1020 {
+        if (32..1020).contains(&intid) {
             self.CLRSPI_SR.write(CLRSPI_SR::INTID.val(intid));
         }
     }
 
     /// Configure non-maskable interrupt
     pub fn set_nmi(&self, intid: u32, nmi: bool) {
-        if intid >= 32 && intid < 1020 {
+        if (32..1020).contains(&intid) {
             let reg_idx = (intid / 32) as usize;
             let bit_idx = intid % 32;
 
@@ -525,7 +433,7 @@ impl DistributorReg {
 
     /// Check if interrupt is configured as NMI
     pub fn is_nmi(&self, intid: u32) -> bool {
-        if intid >= 32 && intid < 1020 {
+        if (32..1020).contains(&intid) {
             let reg_idx = (intid / 32) as usize;
             let bit_idx = intid % 32;
 
@@ -614,7 +522,7 @@ register_bitfields! [
         /// Register Write Pending - read only
         RWP OFFSET(31) NUMBITS(1) [],
     ],
-
+    /// When access is Secure, in a system that supports two Security states
     pub CTLR_S [
         EnableGrp0 OFFSET(0) NUMBITS(1) [],
         EnableGrp1NS OFFSET(1) NUMBITS(1) [],
@@ -625,12 +533,14 @@ register_bitfields! [
         E1NWF OFFSET(7) NUMBITS(1) [],
         RWP OFFSET(31) NUMBITS(1) [],
     ],
+    /// When access is Non-secure, in a system that supports two Security states
     pub CTLR_NS [
         EnableGrp1 OFFSET(0) NUMBITS(1) [],
         EnableGrp1A OFFSET(1) NUMBITS(1) [],
         ARE_NS OFFSET(4) NUMBITS(1) [],
         RWP OFFSET(31) NUMBITS(1) [],
     ],
+    /// When in a system that supports only a single Security state
     pub CTLR_ONE [
         EnableGrp0 OFFSET(0) NUMBITS(1) [],
         EnableGrp1 OFFSET(1) NUMBITS(1) [],

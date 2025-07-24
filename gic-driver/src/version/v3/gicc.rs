@@ -1,5 +1,3 @@
-use tock_registers::register_bitfields;
-
 macro_rules! cpu_read {
     ($name: expr) => {{
         let x: usize;
