@@ -26,11 +26,12 @@ macro_rules! cpu_write {
     }};
 }
 
-pub mod gicc;
+pub mod asm;
 mod gicd;
 mod gicr;
 
-use crate::{VirtAddr, v3::gicc::enable_group1};
+use crate::VirtAddr;
+use asm::*;
 use gicd::*;
 use gicr::*;
 
@@ -258,7 +259,7 @@ impl CpuInterface {
         cpu_write!("ICC_PMR_EL1", 0xFF);
 
         // 5. Enable Group 1 interrupts
-        enable_group1();
+        ICC_IGRPEN1_EL1.write(ICC_IGRPEN1_EL1::ENABLE::SET);
 
         // 6. Configure control register based on security state
         match self.security_state {
