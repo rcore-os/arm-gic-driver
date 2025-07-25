@@ -187,7 +187,8 @@ impl Gic {
     /// # Arguments
     /// * `sgi_id` - SGI interrupt ID (0-15)
     /// * `target` - Target CPUs for the SGI
-    pub fn send_sgi(&self, sgi_id: u32, target: SGITarget) {
+    pub fn send_sgi(&self, sgi_id: IntId, target: SGITarget) {
+        let sgi_id = sgi_id.to_u32();
         assert!(sgi_id < 16, "Invalid SGI ID: {sgi_id}");
         let (filter, target_list) = match target {
             SGITarget::TargetList(list) => (
@@ -523,6 +524,59 @@ impl CpuInterface {
 
     pub fn get_cfg(&self, id: IntId) -> Trigger {
         self.gicd().get_cfg(id)
+    }
+
+    pub const fn trap_operations(&self) -> TrapOp {
+        TrapOp::new(self.gicc as *mut u8)
+    }
+}
+
+pub struct TrapOp {
+    gicc: *mut CpuInterfaceReg,
+}
+
+unsafe impl Send for TrapOp {}
+unsafe impl Sync for TrapOp {}
+
+impl TrapOp {
+    const fn new(gicc: *mut u8) -> Self {
+        Self { gicc: gicc as _ }
+    }
+
+    fn gicc(&self) -> &CpuInterfaceReg {
+        unsafe { &*self.gicc }
+    }
+
+    pub fn eoi_mode_ns(&self) -> bool {
+        self.gicc().CTLR.is_set(gicc::CTLR::EOImodeNS)
+    }
+
+    /// Acknowledge an interrupt and return the interrupt ID
+    /// Returns the interrupt ID and source CPU ID (for SGIs)
+    pub fn ack(&self) -> Ack {
+        self.gicc().IAR.get().into()
+    }
+
+    /// Signal end of interrupt processing
+    pub fn eoi(&self, ack: Ack) {
+        let val = match ack {
+            Ack::Other(intid) => gicc::EOIR::EOIINTID.val(intid.to_u32()),
+            Ack::SGI { intid, cpu_id } => {
+                gicc::EOIR::EOIINTID.val(intid.to_u32()) + gicc::EOIR::CPUID.val(cpu_id as u32)
+            }
+        };
+        self.gicc().EOIR.write(val);
+    }
+
+    /// Deactivate an interrupt
+    pub fn dir(&self, ack: Ack) {
+        let val = match ack {
+            Ack::Other(intid) => gicc::DIR::InterruptID.val(intid.to_u32()),
+            Ack::SGI { intid, cpu_id } => {
+                gicc::DIR::InterruptID.val(intid.to_u32()) + gicc::DIR::CPUID.val(cpu_id as u32)
+            }
+        };
+        self.gicc().DIR.write(val);
     }
 }
 

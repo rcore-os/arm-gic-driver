@@ -1,13 +1,19 @@
 #![no_std]
 #![cfg(target_os = "none")]
 
-use arm_gic_driver::{IntId, VirtAddr, v3};
+use arm_gic_driver::{
+    IntId, VirtAddr,
+    v3::TrapOp,
+    v3::{self, SGITarget},
+};
 use log::{debug, info};
-use spin::Mutex;
+use spin::{Mutex, Once};
 use test_base::{somehal::mem::iomap, *};
 static GIC: Mutex<v3::Gic> =
     Mutex::new(unsafe { v3::Gic::new(VirtAddr::new(0), VirtAddr::new(0)) });
 static CPU_IF: Mutex<Option<v3::CpuInterface>> = Mutex::new(None);
+
+static TRAP_OP: Once<TrapOp> = Once::new();
 
 #[somehal::entry]
 fn main(_args: &somehal::BootInfo) -> ! {
@@ -16,6 +22,7 @@ fn main(_args: &somehal::BootInfo) -> ! {
     init_gic();
 
     test_suit::ppi::test_irq();
+    test_suit::sgi::test_to_current_cpu();
 
     info!("{TEST_SUCCESS}");
 }
@@ -48,10 +55,9 @@ fn init_gic() {
     let mut cpu = gic.cpu_interface();
     cpu.init_current_cpu().unwrap();
     // cpu.set_eoi_mode_ns(false);
-    {
-        *GIC.lock() = gic;
-        CPU_IF.lock().replace(cpu);
-    }
+    TRAP_OP.call_once(|| cpu.trap_operations());
+    *GIC.lock() = gic;
+    CPU_IF.lock().replace(cpu);
 
     // 启用CPU全局中断
     unsafe {
@@ -63,9 +69,7 @@ fn init_gic() {
 #[somehal::irq_handler]
 fn irq_handler() {
     // debug!("IRQ handler invoked");
-    let g = CPU_IF.lock();
-    let cpu = g.as_ref().unwrap();
-    let ack = cpu.ack1();
+    let ack = trap().ack1();
 
     debug!("Handling IRQ: {ack:?}");
 
@@ -74,17 +78,21 @@ fn irq_handler() {
     }
 
     if !ack.is_special() {
-        cpu.eoi1(ack);
-        if cpu.eoi_mode() {
-            cpu.dir(ack);
+        trap().eoi1(ack);
+        if trap().eoi_mode() {
+            trap().dir(ack);
         }
     }
+}
+
+fn trap() -> &'static TrapOp {
+    TRAP_OP.wait()
 }
 
 // 返回None表示中断已处理
 fn handle_list(intid: IntId) -> Option<()> {
     test_suit::ppi::handle(intid)?;
-    test_suit::sgi::handle(intid)?;
+    test_suit::sgi::handle(intid, None)?;
     Some(())
 }
 
@@ -119,6 +127,7 @@ impl test_base::test_suit::TestIf for CpuImpl {
     }
 
     fn sgi_to_current(&self, intid: IntId) {
-        GIC.lock();
+        let c = CPU_IF.lock();
+        c.as_ref().unwrap().send_sgi(intid, SGITarget::current());
     }
 }

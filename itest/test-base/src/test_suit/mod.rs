@@ -23,7 +23,7 @@ impl TestIf for CpuInterfaceEmpty {
         unimplemented!()
     }
 
-    fn sgi_to_current(&self, intid: IntId) {
+    fn sgi_to_current(&self, _intid: IntId) {
         todo!()
     }
 }
