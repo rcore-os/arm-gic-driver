@@ -113,17 +113,17 @@ impl Gic {
         self.gicd().enable();
     }
 
-    /// Enable a specific interrupt
-    pub fn irq_enable(&self, id: IntId) {
-        self.gicd().ISENABLER.set_irq_bit(id.into());
+    /// Set interrupt enable state
+    pub fn set_enable(&self, intid: IntId, enable: bool) {
+        if enable {
+            self.gicd().ISENABLER.set_irq_bit(intid.into());
+        } else {
+            self.gicd().ICENABLER.set_irq_bit(intid.into());
+        }
     }
 
-    /// Disable a specific interrupt
-    pub fn irq_disable(&self, id: IntId) {
-        self.gicd().ICENABLER.set_irq_bit(id.into());
-    }
-
-    pub fn irq_is_enabled(&self, id: IntId) -> bool {
+    /// Is interrupt enabled?
+    pub fn is_enable(&self, id: IntId) -> bool {
         self.gicd().ISENABLER.get_irq_bit(id.into())
     }
 

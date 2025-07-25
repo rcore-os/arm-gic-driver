@@ -85,7 +85,7 @@ register_structs! {
 
 impl DistributorReg {
     pub fn get_security_state(&self) -> SecurityState {
-        if self.is_single_security_state() {
+        if self.is_single_security_state() || !self.has_security_extensions() {
             SecurityState::Single
         } else {
             // In two security states configuration, use GICD_NSACR access behavior to determine security state

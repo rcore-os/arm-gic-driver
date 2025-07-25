@@ -2,21 +2,21 @@
 //
 // 定义 GICv3 寄存器访问宏
 
-/// 定义 CPU 寄存器读取宏
-macro_rules! cpu_read {
-    ($reg:expr) => {{
-        let reg: u64;
-        unsafe { core::arch::asm!(concat!("mrs {0}, ", $reg), out(reg) reg) }
-        reg
-    }};
-}
+// /// 定义 CPU 寄存器读取宏
+// macro_rules! cpu_read {
+//     ($reg:expr) => {{
+//         let reg: u64;
+//         unsafe { core::arch::asm!(concat!("mrs {0}, ", $reg), out(reg) reg) }
+//         reg
+//     }};
+// }
 
-/// 定义 CPU 寄存器写入宏
-macro_rules! cpu_write {
-    ($reg:expr, $val:expr) => {
-        unsafe { core::arch::asm!(concat!("msr ", $reg, ", {0:x}"), in(reg) $val) }
-    };
-}
+// /// 定义 CPU 寄存器写入宏
+// macro_rules! cpu_write {
+//     ($reg:expr, $val:expr) => {
+//         unsafe { core::arch::asm!(concat!("msr ", $reg, ", {0:x}"), in(reg) $val) }
+//     };
+// }
 
 macro_rules! define_readonly_register {
     (
