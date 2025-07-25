@@ -1,23 +1,18 @@
 use core::ptr::NonNull;
 
-use aarch64_cpu::{asm::barrier, registers::*};
+use aarch64_cpu::{
+    asm::barrier,
+    registers::{CurrentEL, MPIDR_EL1},
+};
 use log::*;
 use tock_registers::{LocalRegisterCopy, interfaces::*};
 
-pub mod asm;
 mod gicd;
 mod gicr;
 
-use crate::{
-    VirtAddr,
-    v3::asm::{ICC_IGRPEN1_EL1, ICC_SRE_EL1},
-};
+use crate::{VirtAddr, sys_reg::*};
 use gicd::*;
 use gicr::*;
-
-const GICC_SRE_SRE: usize = 1 << 0;
-const GICC_SRE_DFB: usize = 1 << 1;
-const GICC_SRE_DIB: usize = 1 << 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CPUTarget {
@@ -226,13 +221,14 @@ impl CpuInterface {
         if CurrentEL.read(CurrentEL::EL) == 2 {
             ICC_SRE_EL2
                 .write(ICC_SRE_EL2::SRE::SET + ICC_SRE_EL2::DFB::SET + ICC_SRE_EL2::DIB::SET);
+            ICC_CTLR_EL1.modify(ICC_CTLR_EL1::EOIMODE::SET);
         } else {
             ICC_SRE_EL1
                 .write(ICC_SRE_EL1::SRE::SET + ICC_SRE_EL1::DFB::SET + ICC_SRE_EL1::DIB::SET);
         }
 
         // 4. Set interrupt priority mask to allow all priorities
-        cpu_write!("ICC_PMR_EL1", 0xFF);
+        ICC_PMR_EL1.write(ICC_PMR_EL1::PRIORITY.val(0xFF));
 
         // 5. Enable Group 1 interrupts
         ICC_IGRPEN1_EL1.write(ICC_IGRPEN1_EL1::ENABLE::SET);
@@ -241,17 +237,11 @@ impl CpuInterface {
         match self.security_state {
             SecurityState::Single => {
                 // In single security state, use CBPR (Common Binary Point Register)
-                const GICC_CTLR_CBPR: usize = 1 << 0;
-                cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
+                ICC_CTLR_EL1.modify(ICC_CTLR_EL1::CBPR::SET);
             }
-            SecurityState::Secure => {
-                // In secure state, don't set CBPR to allow separate binary point registers
-                cpu_write!("ICC_CTLR_EL1", 0);
-            }
+            SecurityState::Secure => {}
             SecurityState::NonSecure => {
-                // In non-secure state, use CBPR
-                const GICC_CTLR_CBPR: usize = 1 << 0;
-                cpu_write!("ICC_CTLR_EL1", GICC_CTLR_CBPR);
+                ICC_CTLR_EL1.modify(ICC_CTLR_EL1::CBPR::SET);
             }
         }
 

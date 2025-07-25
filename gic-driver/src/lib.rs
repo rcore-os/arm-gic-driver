@@ -2,6 +2,8 @@
 #![doc = include_str!("../../README.md")]
 
 pub(crate) mod define;
+pub mod sys_reg;
+
 #[cfg(test)]
 mod tests;
 mod version;
