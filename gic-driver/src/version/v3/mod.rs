@@ -10,14 +10,101 @@ use tock_registers::{LocalRegisterCopy, interfaces::*};
 mod gicd;
 mod gicr;
 
-use crate::{
-    IntId, VirtAddr,
-    define::Trigger,
-    sys_reg::*,
-    version::{IrqVecReadable, IrqVecWriteable},
-};
+pub use crate::{IntId, VirtAddr, define::Trigger, sys_reg::*};
+
+use crate::version::{IrqVecReadable, IrqVecWriteable};
 use gicd::*;
 use gicr::*;
+
+/// SGI target specification for GICv3.
+///
+/// Defines how to target CPUs when sending Software Generated Interrupts (SGIs).
+/// Unlike GICv2, GICv3 uses affinity-based targeting through system registers.
+#[derive(Debug, Clone, Copy)]
+pub enum SGITarget {
+    /// Send SGI to the current CPU (using IRM=1).
+    All,
+    /// Send SGI to specific CPUs identified by affinity and target list.
+    List(TargetList),
+}
+
+impl SGITarget {
+    /// Create a target for the current CPU.
+    pub fn current() -> Self {
+        let affinity = Affinity::current();
+        Self::list([affinity]) // Only target current CPU
+    }
+
+    /// Create a target for specific CPUs using affinity routing.
+    ///
+    /// # Arguments
+    ///
+    /// * `affinity` - The base affinity (aff3, aff2, aff1)
+    /// * `target_list` - Bitmap of target CPUs at affinity level 0
+    pub fn list(list: impl AsRef<[Affinity]>) -> Self {
+        Self::List(TargetList::new(list))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TargetList {
+    /// Affinity level 3 (highest level)
+    aff3: u8,
+    /// Affinity level 2
+    aff2: u8,
+    /// Affinity level 1
+    aff1: u8,
+    /// Target list bitmap (16-bit) identifying CPUs at affinity level 0
+    target_list: u16,
+}
+
+impl TargetList {
+    /// Create a new TargetList with a specific CPU target list. list is Cpu interface IDs.
+    pub fn new(list: impl AsRef<[Affinity]>) -> Self {
+        let mut aff3 = 0;
+        let mut aff2 = 0;
+        let mut aff1 = 0;
+        let mut raw = 0;
+        for (i, aff) in list.as_ref().iter().enumerate() {
+            if i == 0 {
+                aff3 = aff.aff3;
+                aff2 = aff.aff2;
+                aff1 = aff.aff1;
+            } else {
+                assert!(
+                    aff.aff3 == aff3 && aff.aff2 == aff2 && aff.aff1 == aff1,
+                    "All targets must have the same affinity levels except for level 0"
+                );
+            }
+            raw |= 1 << aff.aff0; // Set bit for each target CPU
+        }
+        Self {
+            aff3,
+            aff2,
+            aff1,
+            target_list: raw,
+        }
+    }
+
+    pub fn add(&mut self, affinity: Affinity) {
+        assert!(
+            affinity.aff3 == self.aff3 && affinity.aff2 == self.aff2 && affinity.aff1 == self.aff1,
+            "All targets must have the same affinity levels except for level 0"
+        );
+        self.target_list |= 1 << affinity.aff0; // Set bit for the target CPU
+    }
+
+    pub fn affinity_list(&self) -> impl Iterator<Item = Affinity> {
+        (0..16)
+            .filter(move |i| (self.target_list & (1 << i)) != 0)
+            .map(move |i| Affinity {
+                aff3: self.aff3,
+                aff2: self.aff2,
+                aff1: self.aff1,
+                aff0: i as u8,
+            })
+    }
+}
 
 /// Affinity routing information for GICv3.
 ///
@@ -344,6 +431,10 @@ impl Gic {
         RDv3Slice::new(unsafe { NonNull::new_unchecked(self.gicr.as_ptr()) })
     }
 
+    fn current_rd_ref(&self) -> &RedistributorV3 {
+        unsafe { self.current_rd().as_ref() }
+    }
+
     fn current_rd(&self) -> NonNull<RedistributorV3> {
         let want = (MPIDR_EL1.get() & 0xFFF) as u32;
 
@@ -410,12 +501,11 @@ impl Gic {
     /// gic.set_irq_enable(spi, false); // Disable SPI 42
     /// ```
     pub fn set_irq_enable(&mut self, intid: IntId, enable: bool) {
-        assert!(
-            !intid.is_private(),
-            "Cannot enable/disable private interrupts directly"
-        );
-
-        if enable {
+        if intid.is_private() {
+            self.current_rd_ref()
+                .sgi
+                .set_enable_interrupt(intid, enable);
+        } else if enable {
             self.gicd().irq_enable(intid.to_u32());
         } else {
             self.gicd().irq_disable(intid.to_u32());
@@ -447,7 +537,11 @@ impl Gic {
     /// }
     /// ```
     pub fn is_irq_enable(&self, id: IntId) -> bool {
-        self.gicd().ISENABLER.get_irq_bit(id.into())
+        if id.is_private() {
+            self.current_rd_ref().sgi.is_interrupt_enabled(id)
+        } else {
+            self.gicd().ISENABLER.get_irq_bit(id.into())
+        }
     }
 
     /// Set the priority of an interrupt.
@@ -470,7 +564,11 @@ impl Gic {
     /// gic.set_priority(spi, 0x80); // Set to medium priority
     /// ```
     pub fn set_priority(&self, intid: IntId, priority: u8) {
-        self.gicd().set_priority(intid.to_u32(), priority);
+        if intid.is_private() {
+            self.current_rd_ref().sgi.set_priority(intid, priority);
+        } else {
+            self.gicd().set_priority(intid.to_u32(), priority);
+        }
     }
 
     /// Get the priority of an interrupt.
@@ -495,7 +593,11 @@ impl Gic {
     /// println!("SPI 42 priority: {}", priority);
     /// ```
     pub fn get_priority(&self, intid: IntId) -> u8 {
-        self.gicd().get_priority(intid.to_u32())
+        if intid.is_private() {
+            self.current_rd_ref().sgi.get_priority(intid)
+        } else {
+            self.gicd().get_priority(intid.to_u32())
+        }
     }
 
     /// Set the active state of an interrupt.
@@ -518,7 +620,9 @@ impl Gic {
     /// gic.set_active(spi, false); // Clear active state
     /// ```
     pub fn set_active(&self, id: IntId, active: bool) {
-        if active {
+        if id.is_private() {
+            self.current_rd_ref().sgi.set_active(id, active);
+        } else if active {
             self.gicd().ISACTIVER.set_irq_bit(id.into());
         } else {
             self.gicd().ICACTIVER.set_irq_bit(id.into());
@@ -548,7 +652,11 @@ impl Gic {
     /// }
     /// ```
     pub fn is_active(&self, id: IntId) -> bool {
-        self.gicd().ISACTIVER.get_irq_bit(id.into())
+        if id.is_private() {
+            self.current_rd_ref().sgi.is_active(id)
+        } else {
+            self.gicd().ISACTIVER.get_irq_bit(id.into())
+        }
     }
 
     /// Set the pending state of an interrupt.
@@ -571,7 +679,9 @@ impl Gic {
     /// gic.set_pending(spi, false); // Clear pending state
     /// ```
     pub fn set_pending(&self, id: IntId, pending: bool) {
-        if pending {
+        if id.is_private() {
+            self.current_rd_ref().sgi.set_pending(id, pending);
+        } else if pending {
             self.gicd().set_pending(id.into());
         } else {
             self.gicd().clear_pending(id.into());
@@ -601,7 +711,11 @@ impl Gic {
     /// }
     /// ```
     pub fn is_pending(&self, id: IntId) -> bool {
-        self.gicd().ISPENDR.get_irq_bit(id.into())
+        if id.is_private() {
+            self.current_rd_ref().sgi.is_pending(id)
+        } else {
+            self.gicd().ISPENDR.get_irq_bit(id.into())
+        }
     }
 
     /// Get the raw IIDR (Implementer Identification Register) value.
@@ -669,43 +783,34 @@ impl Gic {
     /// gic.set_cfg(spi, Trigger::Level); // Configure as level-triggered
     /// ```
     pub fn set_cfg(&self, id: IntId, cfg: Trigger) {
-        let int_num = id.to_u32();
-        let reg_index = (int_num / 16) as usize;
-        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
-
-        assert!(
-            reg_index < self.gicd().ICFGR.len(),
-            "Invalid interrupt ID for config: {id:?}"
-        );
-
-        let current = self.gicd().ICFGR[reg_index].get();
-        let mask = 1 << bit_offset;
-
-        let new_value = match cfg {
-            Trigger::Level => current & !mask, // Clear bit for level-triggered
-            Trigger::Edge => current | mask,   // Set bit for edge-triggered
-        };
-
-        self.gicd().ICFGR[reg_index].set(new_value);
+        if id.is_private() {
+            self.current_rd_ref().sgi.set_cfgr(id, cfg);
+        } else {
+            self.gicd().set_interrupt_config(id, cfg);
+        }
     }
 
     pub fn get_cfg(&self, id: IntId) -> Trigger {
-        let int_num = id.to_u32();
-        let reg_index = (int_num / 16) as usize;
-        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
-
-        assert!(
-            reg_index < self.gicd().ICFGR.len(),
-            "Invalid interrupt ID for config: {id:?}"
-        );
-
-        let current = self.gicd().ICFGR[reg_index].get();
-        let mask = 1 << bit_offset;
-
-        if current & mask != 0 {
-            Trigger::Edge
+        if id.is_private() {
+            self.current_rd_ref().sgi.get_cfgr(id)
         } else {
-            Trigger::Level
+            let int_num = id.to_u32();
+            let reg_index = (int_num / 16) as usize;
+            let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
+
+            assert!(
+                reg_index < self.gicd().ICFGR.len(),
+                "Invalid interrupt ID for config: {id:?}"
+            );
+
+            let current = self.gicd().ICFGR[reg_index].get();
+            let mask = 1 << bit_offset;
+
+            if current & mask != 0 {
+                Trigger::Edge
+            } else {
+                Trigger::Level
+            }
         }
     }
 
@@ -826,6 +931,10 @@ impl CpuInterface {
         });
     }
 
+    pub fn eoi_mode(&self) -> bool {
+        ICC_CTLR_EL1.is_set(ICC_CTLR_EL1::EOIMODE)
+    }
+
     pub fn ack0(&self) -> IntId {
         let raw = ICC_IAR0_EL1.read(ICC_IAR0_EL1::INTID) as u32;
         unsafe { IntId::raw(raw) }
@@ -934,5 +1043,80 @@ impl CpuInterface {
             "Cannot get config for non-private interrupt: {id:?}"
         );
         self.rd().sgi.get_cfgr(id)
+    }
+
+    pub fn send_sgi(&self, sgi_id: IntId, target: SGITarget) {
+        send_sgi(sgi_id, target);
+    }
+
+    pub const fn trap_operations(&self) -> TrapOp {
+        TrapOp {}
+    }
+}
+
+pub struct TrapOp {}
+
+unsafe impl Send for TrapOp {}
+unsafe impl Sync for TrapOp {}
+
+impl TrapOp {
+    pub fn eoi_mode(&self) -> bool {
+        ICC_CTLR_EL1.is_set(ICC_CTLR_EL1::EOIMODE)
+    }
+
+    pub fn ack0(&self) -> IntId {
+        let raw = ICC_IAR0_EL1.read(ICC_IAR0_EL1::INTID) as u32;
+        unsafe { IntId::raw(raw) }
+    }
+
+    pub fn ack1(&self) -> IntId {
+        let raw = ICC_IAR1_EL1.read(ICC_IAR1_EL1::INTID) as u32;
+        unsafe { IntId::raw(raw) }
+    }
+
+    pub fn eoi0(&self, ack: IntId) {
+        ICC_EOIR0_EL1.write(ICC_EOIR0_EL1::INTID.val(ack.to_u32() as _));
+    }
+
+    pub fn eoi1(&self, ack: IntId) {
+        ICC_EOIR1_EL1.write(ICC_EOIR1_EL1::INTID.val(ack.to_u32() as _));
+    }
+
+    /// Deactivate an interrupt
+    pub fn dir(&self, ack: IntId) {
+        ICC_DIR_EL1.write(ICC_DIR_EL1::INTID.val(ack.to_u32() as _));
+    }
+}
+
+/// Send a Software Generated Interrupt (SGI) to target CPUs.
+///
+/// In GICv3, SGIs are sent using system registers ICC_SGI1R_EL1 and ICC_SGI0_EL1
+/// instead of the legacy GICD_SGIR register used in GICv2.
+///
+/// # Arguments
+///
+/// * `sgi_id` - SGI interrupt ID (0-15)
+/// * `target` - Target specification for the SGI
+/// ```
+pub fn send_sgi(sgi_id: IntId, target: SGITarget) {
+    assert!(sgi_id.is_sgi(), "Invalid SGI ID: {sgi_id:?}");
+
+    let sgi_num = sgi_id.to_u32();
+
+    match target {
+        SGITarget::All => {
+            trace!("Sending SGI {sgi_num} to all CPUs");
+            ICC_SGI1R_EL1.write(ICC_SGI1R_EL1::INTID.val(sgi_num as u64) + ICC_SGI1R_EL1::IRM::SET);
+        }
+        SGITarget::List(val) => {
+            trace!("Sending SGI {sgi_num} to CPUs with affinity: {val:#x?}");
+            // Send to specific CPUs identified by affinity and target list
+            let value = ICC_SGI1R_EL1::INTID.val(sgi_num as u64)
+                + ICC_SGI1R_EL1::AFF3.val(val.aff3 as u64)
+                + ICC_SGI1R_EL1::AFF2.val(val.aff2 as u64)
+                + ICC_SGI1R_EL1::AFF1.val(val.aff1 as u64)
+                + ICC_SGI1R_EL1::TARGETLIST.val(val.target_list as u64);
+            ICC_SGI1R_EL1.write(value);
+        }
     }
 }
