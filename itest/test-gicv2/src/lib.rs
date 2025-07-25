@@ -1,7 +1,7 @@
 #![no_std]
 #![cfg(target_os = "none")]
 
-use arm_gic_driver::{IntId, VirtAddr, v2::*};
+use arm_gic_driver::v2::*;
 use log::{debug, info};
 use spin::{Mutex, Once};
 use test_base::{somehal::mem::iomap, *};

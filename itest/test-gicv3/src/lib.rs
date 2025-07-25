@@ -1,17 +1,12 @@
 #![no_std]
 #![cfg(target_os = "none")]
 
-use arm_gic_driver::{
-    IntId, VirtAddr,
-    v3::TrapOp,
-    v3::{self, SGITarget},
-};
+use arm_gic_driver::v3::*;
 use log::{debug, info};
 use spin::{Mutex, Once};
 use test_base::{somehal::mem::iomap, *};
-static GIC: Mutex<v3::Gic> =
-    Mutex::new(unsafe { v3::Gic::new(VirtAddr::new(0), VirtAddr::new(0)) });
-static CPU_IF: Mutex<Option<v3::CpuInterface>> = Mutex::new(None);
+static GIC: Mutex<Gic> = Mutex::new(unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) });
+static CPU_IF: Mutex<Option<CpuInterface>> = Mutex::new(None);
 
 static TRAP_OP: Once<TrapOp> = Once::new();
 
@@ -49,7 +44,7 @@ fn init_gic() {
     let gicc_base = iomap(gicr_base.address as _, gicr_base.size.unwrap_or_default())
         .expect("Failed to map GICC base address");
 
-    let mut gic = unsafe { v3::Gic::new(gicd_base.into(), gicc_base.into()) };
+    let mut gic = unsafe { Gic::new(gicd_base.into(), gicc_base.into()) };
 
     gic.init();
     let mut cpu = gic.cpu_interface();

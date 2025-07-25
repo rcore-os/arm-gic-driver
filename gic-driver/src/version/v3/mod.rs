@@ -1,8 +1,8 @@
-use core::{ops::Deref, ptr::NonNull};
+use core::ptr::NonNull;
 
 use aarch64_cpu::{
     asm::barrier,
-    registers::{CurrentEL, MPIDR_EL1, SCTLR_EL2::A},
+    registers::{CurrentEL, MPIDR_EL1},
 };
 use log::*;
 use tock_registers::{LocalRegisterCopy, interfaces::*};
@@ -10,12 +10,9 @@ use tock_registers::{LocalRegisterCopy, interfaces::*};
 mod gicd;
 mod gicr;
 
-use crate::{
-    IntId, VirtAddr,
-    define::Trigger,
-    sys_reg::*,
-    version::{IrqVecReadable, IrqVecWriteable},
-};
+pub use crate::{IntId, VirtAddr, define::Trigger, sys_reg::*};
+
+use crate::version::{IrqVecReadable, IrqVecWriteable};
 use gicd::*;
 use gicr::*;
 
@@ -44,7 +41,7 @@ impl SGITarget {
     ///
     /// * `affinity` - The base affinity (aff3, aff2, aff1)
     /// * `target_list` - Bitmap of target CPUs at affinity level 0
-    pub fn list<'a>(list: impl AsRef<[Affinity]>) -> Self {
+    pub fn list(list: impl AsRef<[Affinity]>) -> Self {
         Self::List(TargetList::new(list))
     }
 }
@@ -63,7 +60,7 @@ pub struct TargetList {
 
 impl TargetList {
     /// Create a new TargetList with a specific CPU target list. list is Cpu interface IDs.
-    pub fn new<'a>(list: impl AsRef<[Affinity]>) -> Self {
+    pub fn new(list: impl AsRef<[Affinity]>) -> Self {
         let mut aff3 = 0;
         let mut aff2 = 0;
         let mut aff1 = 0;
@@ -540,7 +537,11 @@ impl Gic {
     /// }
     /// ```
     pub fn is_irq_enable(&self, id: IntId) -> bool {
-        self.gicd().ISENABLER.get_irq_bit(id.into())
+        if id.is_private() {
+            self.current_rd_ref().sgi.is_interrupt_enabled(id)
+        } else {
+            self.gicd().ISENABLER.get_irq_bit(id.into())
+        }
     }
 
     /// Set the priority of an interrupt.
@@ -563,7 +564,11 @@ impl Gic {
     /// gic.set_priority(spi, 0x80); // Set to medium priority
     /// ```
     pub fn set_priority(&self, intid: IntId, priority: u8) {
-        self.gicd().set_priority(intid.to_u32(), priority);
+        if intid.is_private() {
+            self.current_rd_ref().sgi.set_priority(intid, priority);
+        } else {
+            self.gicd().set_priority(intid.to_u32(), priority);
+        }
     }
 
     /// Get the priority of an interrupt.
@@ -588,7 +593,11 @@ impl Gic {
     /// println!("SPI 42 priority: {}", priority);
     /// ```
     pub fn get_priority(&self, intid: IntId) -> u8 {
-        self.gicd().get_priority(intid.to_u32())
+        if intid.is_private() {
+            self.current_rd_ref().sgi.get_priority(intid)
+        } else {
+            self.gicd().get_priority(intid.to_u32())
+        }
     }
 
     /// Set the active state of an interrupt.
@@ -611,7 +620,9 @@ impl Gic {
     /// gic.set_active(spi, false); // Clear active state
     /// ```
     pub fn set_active(&self, id: IntId, active: bool) {
-        if active {
+        if id.is_private() {
+            self.current_rd_ref().sgi.set_active(id, active);
+        } else if active {
             self.gicd().ISACTIVER.set_irq_bit(id.into());
         } else {
             self.gicd().ICACTIVER.set_irq_bit(id.into());
@@ -641,7 +652,11 @@ impl Gic {
     /// }
     /// ```
     pub fn is_active(&self, id: IntId) -> bool {
-        self.gicd().ISACTIVER.get_irq_bit(id.into())
+        if id.is_private() {
+            self.current_rd_ref().sgi.is_active(id)
+        } else {
+            self.gicd().ISACTIVER.get_irq_bit(id.into())
+        }
     }
 
     /// Set the pending state of an interrupt.
@@ -664,7 +679,9 @@ impl Gic {
     /// gic.set_pending(spi, false); // Clear pending state
     /// ```
     pub fn set_pending(&self, id: IntId, pending: bool) {
-        if pending {
+        if id.is_private() {
+            self.current_rd_ref().sgi.set_pending(id, pending);
+        } else if pending {
             self.gicd().set_pending(id.into());
         } else {
             self.gicd().clear_pending(id.into());
@@ -694,7 +711,11 @@ impl Gic {
     /// }
     /// ```
     pub fn is_pending(&self, id: IntId) -> bool {
-        self.gicd().ISPENDR.get_irq_bit(id.into())
+        if id.is_private() {
+            self.current_rd_ref().sgi.is_pending(id)
+        } else {
+            self.gicd().ISPENDR.get_irq_bit(id.into())
+        }
     }
 
     /// Get the raw IIDR (Implementer Identification Register) value.
@@ -762,43 +783,34 @@ impl Gic {
     /// gic.set_cfg(spi, Trigger::Level); // Configure as level-triggered
     /// ```
     pub fn set_cfg(&self, id: IntId, cfg: Trigger) {
-        let int_num = id.to_u32();
-        let reg_index = (int_num / 16) as usize;
-        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
-
-        assert!(
-            reg_index < self.gicd().ICFGR.len(),
-            "Invalid interrupt ID for config: {id:?}"
-        );
-
-        let current = self.gicd().ICFGR[reg_index].get();
-        let mask = 1 << bit_offset;
-
-        let new_value = match cfg {
-            Trigger::Level => current & !mask, // Clear bit for level-triggered
-            Trigger::Edge => current | mask,   // Set bit for edge-triggered
-        };
-
-        self.gicd().ICFGR[reg_index].set(new_value);
+        if id.is_private() {
+            self.current_rd_ref().sgi.set_cfgr(id, cfg);
+        } else {
+            self.gicd().set_interrupt_config(id, cfg);
+        }
     }
 
     pub fn get_cfg(&self, id: IntId) -> Trigger {
-        let int_num = id.to_u32();
-        let reg_index = (int_num / 16) as usize;
-        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
-
-        assert!(
-            reg_index < self.gicd().ICFGR.len(),
-            "Invalid interrupt ID for config: {id:?}"
-        );
-
-        let current = self.gicd().ICFGR[reg_index].get();
-        let mask = 1 << bit_offset;
-
-        if current & mask != 0 {
-            Trigger::Edge
+        if id.is_private() {
+            self.current_rd_ref().sgi.get_cfgr(id)
         } else {
-            Trigger::Level
+            let int_num = id.to_u32();
+            let reg_index = (int_num / 16) as usize;
+            let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
+
+            assert!(
+                reg_index < self.gicd().ICFGR.len(),
+                "Invalid interrupt ID for config: {id:?}"
+            );
+
+            let current = self.gicd().ICFGR[reg_index].get();
+            let mask = 1 << bit_offset;
+
+            if current & mask != 0 {
+                Trigger::Edge
+            } else {
+                Trigger::Level
+            }
         }
     }
 

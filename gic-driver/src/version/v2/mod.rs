@@ -1,6 +1,5 @@
 use core::ptr::NonNull;
 
-use crate::{VirtAddr, define::Trigger};
 use log::trace;
 use tock_registers::{LocalRegisterCopy, interfaces::*};
 
@@ -12,10 +11,9 @@ use gicc::CpuInterfaceReg;
 use gicd::DistributorReg;
 use gich::HypervisorRegs;
 
-use crate::{
-    IntId,
-    version::{IrqVecReadable, IrqVecWriteable},
-};
+pub use crate::{IntId, VirtAddr, define::Trigger};
+
+use crate::version::{IrqVecReadable, IrqVecWriteable};
 
 /// GICv2 driver. (support GICv1)
 pub struct Gic {

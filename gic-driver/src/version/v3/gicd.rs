@@ -3,7 +3,11 @@ use core::hint::spin_loop;
 use aarch64_cpu::asm::barrier;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
-use crate::{define::SPI_RANGE, v3::Affinity};
+use crate::{
+    IntId,
+    define::{SPI_RANGE, Trigger},
+    v3::Affinity,
+};
 
 /// Access context for CTLR register operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,21 +321,25 @@ impl DistributorReg {
     }
 
     /// Configure interrupt configuration (edge/level triggered)
-    pub fn set_interrupt_config(&self, intid: u32, edge_triggered: bool) {
-        if intid >= 32 {
-            // Only SPIs can be controlled via distributor
-            let reg_idx = (intid / 16) as usize; // 16 interrupts per register
-            let bit_idx = (intid % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1
+    pub fn set_interrupt_config(&self, id: IntId, trigger: Trigger) {
+        let int_num = id.to_u32();
+        let reg_index = (int_num / 16) as usize;
+        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
 
-            if reg_idx < self.ICFGR.len() {
-                let current = self.ICFGR[reg_idx].get();
-                if edge_triggered {
-                    self.ICFGR[reg_idx].set(current | (1 << bit_idx));
-                } else {
-                    self.ICFGR[reg_idx].set(current & !(1 << bit_idx));
-                }
-            }
-        }
+        assert!(
+            reg_index < self.ICFGR.len(),
+            "Invalid interrupt ID for config: {id:?}"
+        );
+
+        let current = self.ICFGR[reg_index].get();
+        let mask = 1 << bit_offset;
+
+        let new_value = match trigger {
+            Trigger::Level => current & !mask, // Clear bit for level-triggered
+            Trigger::Edge => current | mask,   // Set bit for edge-triggered
+        };
+
+        self.ICFGR[reg_index].set(new_value);
     }
 
     /// Configure interrupt configuration for all interrupts
