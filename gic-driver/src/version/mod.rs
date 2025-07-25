@@ -42,7 +42,7 @@ impl IrqVecReadable for [ReadWrite<u32>] {
 }
 
 /// Parse interrupt configuration from device tree interrupt specifier.
-/// 
+///
 /// This function interprets device tree interrupt specifiers according to the
 /// ARM GIC device tree binding specification. It supports various interrupt types
 /// and configurations as defined by the Linux kernel's GIC driver.
@@ -90,16 +90,16 @@ impl IrqVecReadable for [ReadWrite<u32>] {
 ///
 /// ```no_run
 /// use arm_gic_driver::{fdt_parse_irq_config, IntId, Trigger};
-/// 
+///
 /// // SGI interrupt
 /// let sgi_config = fdt_parse_irq_config(&[5]).unwrap();
 /// assert!(sgi_config.id.is_sgi());
-/// 
+///
 /// // SPI interrupt (type=0, number=42, level-high)
 /// let spi_config = fdt_parse_irq_config(&[0, 42, 4]).unwrap();
 /// assert_eq!(spi_config.id.to_u32(), 74); // 32 + 42
 /// assert_eq!(spi_config.trigger, Trigger::Level);
-/// 
+///
 /// // PPI interrupt (type=1, number=2, edge-rising)
 /// let ppi_config = fdt_parse_irq_config(&[1, 2, 1]).unwrap();
 /// assert_eq!(spi_config.id.to_u32(), 18); // 16 + 2

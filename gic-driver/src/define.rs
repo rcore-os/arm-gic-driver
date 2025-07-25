@@ -32,7 +32,7 @@ pub enum Trigger {
 ///
 /// ```
 /// use arm_gic_driver::{IrqConfig, IntId, Trigger};
-/// 
+///
 /// let config = IrqConfig {
 ///     id: IntId::spi(42),
 ///     trigger: Trigger::Level,
@@ -94,12 +94,12 @@ pub const SPECIAL_RANGE: Range<u32> = Range {
 ///
 /// ```
 /// use arm_gic_driver::IntId;
-/// 
+///
 /// // Create different types of interrupt IDs
 /// let sgi = IntId::sgi(1);      // SGI #1
 /// let ppi = IntId::ppi(2);      // PPI #2 (actual ID will be 18)
 /// let spi = IntId::spi(42);     // SPI #42 (actual ID will be 74)
-/// 
+///
 /// // Check interrupt type
 /// assert!(sgi.is_sgi());
 /// assert!(ppi.is_private());
@@ -125,7 +125,7 @@ impl IntId {
     ///
     /// ```
     /// use arm_gic_driver::IntId;
-    /// 
+    ///
     /// // Create from a known valid interrupt ID
     /// let intid = unsafe { IntId::raw(32) }; // SPI #0
     /// ```
@@ -150,7 +150,7 @@ impl IntId {
     ///
     /// ```
     /// use arm_gic_driver::IntId;
-    /// 
+    ///
     /// let sgi1 = IntId::sgi(1);
     /// assert_eq!(sgi1.to_u32(), 1);
     /// assert!(sgi1.is_sgi());
@@ -177,7 +177,7 @@ impl IntId {
     ///
     /// ```
     /// use arm_gic_driver::IntId;
-    /// 
+    ///
     /// let ppi2 = IntId::ppi(2);
     /// assert_eq!(ppi2.to_u32(), 18); // 16 + 2
     /// assert!(ppi2.is_private());
@@ -204,7 +204,7 @@ impl IntId {
     ///
     /// ```
     /// use arm_gic_driver::IntId;
-    /// 
+    ///
     /// let spi42 = IntId::spi(42);
     /// assert_eq!(spi42.to_u32(), 74); // 32 + 42
     /// assert!(!spi42.is_private());
@@ -224,7 +224,7 @@ impl IntId {
     ///
     /// ```
     /// use arm_gic_driver::IntId;
-    /// 
+    ///
     /// assert!(IntId::sgi(5).is_sgi());
     /// assert!(!IntId::ppi(5).is_sgi());
     /// ```
@@ -245,7 +245,7 @@ impl IntId {
     ///
     /// ```
     /// use arm_gic_driver::IntId;
-    /// 
+    ///
     /// assert!(IntId::sgi(1).is_private());   // SGI
     /// assert!(IntId::ppi(5).is_private());   // PPI
     /// assert!(!IntId::spi(42).is_private()); // SPI
@@ -264,7 +264,7 @@ impl IntId {
     ///
     /// ```
     /// use arm_gic_driver::IntId;
-    /// 
+    ///
     /// let spi = IntId::spi(10);
     /// assert_eq!(spi.to_u32(), 42); // 32 + 10
     /// ```
@@ -285,10 +285,10 @@ impl IntId {
     ///
     /// ```
     /// use arm_gic_driver::IntId;
-    /// 
+    ///
     /// let special = unsafe { IntId::raw(1023) };
     /// assert!(special.is_special());
-    /// 
+    ///
     /// let normal = IntId::spi(10);
     /// assert!(!normal.is_special());
     /// ```
