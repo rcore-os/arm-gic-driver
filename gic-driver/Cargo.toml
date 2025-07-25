@@ -5,9 +5,10 @@ edition = "2024"
 license = "MIT"
 description = "A driver for the Arm Generic Interrupt Controller."
 authors = ["周睿 <zrufo747@outlook.com>"]
-repository = "https://gitee.com/zr233/arm-gic-driver"
+repository = "https://github.com/rcore-os/arm-gic-driver"
 keywords = ["arm", "aarch64", "driver", "gic", "interrupt-controller"]
 categories = ["embedded", "no-std", "hardware-support"]
+readme = "../README.md"
 
 [lib]
 doctest = false
