@@ -1,0 +1,18 @@
+[package]
+edition = "2024"
+name = "test-base"
+publish = false
+version = "0.1.0"
+
+[features]
+hv = ["somehal/hv"]
+
+[dependencies]
+buddy_system_allocator = "0.11"
+fdt-parser = "0.4"
+log = "0.4"
+somehal = {workspace = true}
+
+[[test]]
+harness = false
+name = "test"

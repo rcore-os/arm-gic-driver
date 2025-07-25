@@ -1,21 +1,13 @@
-[package]
-name = "arm-gic-driver"
-version = "0.14.9"
-edition = "2024"
-license = "MIT"
-description = "A driver for the Arm Generic Interrupt Controller version 1-4."
-authors = ["周睿 <zrufo747@outlook.com>"]
-repository = "https://gitee.com/zr233/arm-gic-driver"
-keywords = ["arm", "aarch64", "driver", "gic", "interrupt-controller"]
-categories = ["embedded", "no-std", "hardware-support"]
+[workspace]
+members = [
+  "gic-driver",
+  "itest/*",
+]
+resolver = "3"
 
-[lib]
-doctest = false
-
-[dependencies]
-tock-registers = { version = "0.9" }
-aarch64-cpu = "10.0"
-enum_dispatch = "0.3"
+[workspace.dependencies]
+any-uart = {version = "0.2"}
+arm-gic-driver = {path = "gic-driver"}
 log = "0.4"
-bitflags = "2.9"
-rdif-intc = "0.11"
+somehal = {version = "0.3"}
+test-base = {path = "itest/test-base"}
