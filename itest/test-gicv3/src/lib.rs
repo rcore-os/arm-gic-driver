@@ -1,8 +1,6 @@
 #![no_std]
 #![cfg(target_os = "none")]
 
-use core::sync::atomic::{AtomicBool, Ordering};
-
 use arm_gic_driver::{IntId, VirtAddr, v3};
 use log::{debug, info};
 use spin::Mutex;
@@ -11,41 +9,10 @@ static GIC: Mutex<v3::Gic> =
     Mutex::new(unsafe { v3::Gic::new(VirtAddr::new(0), VirtAddr::new(0)) });
 static CPU_IF: Mutex<Option<v3::CpuInterface>> = Mutex::new(None);
 
-struct CpuImpl;
-
-impl test_base::test_suit::ICpuIf for CpuImpl {
-    fn set_irq_enable(&self, intid: IntId, enable: bool) {
-        let cpu_if = CPU_IF.lock();
-        if let Some(cpu) = cpu_if.as_ref() {
-            cpu.set_irq_enable(intid, enable);
-        } else {
-            panic!("CPU interface not initialized");
-        }
-    }
-
-    fn set_priority(&self, intid: IntId, priority: u8) {
-        let cpu_if = CPU_IF.lock();
-        if let Some(cpu) = cpu_if.as_ref() {
-            cpu.set_priority(intid, priority);
-        } else {
-            panic!("CPU interface not initialized");
-        }
-    }
-
-    fn is_irq_enable(&self, intid: IntId) -> bool {
-        let cpu_if = CPU_IF.lock();
-        if let Some(cpu) = cpu_if.as_ref() {
-            cpu.is_irq_enable(intid)
-        } else {
-            panic!("CPU interface not initialized");
-        }
-    }
-}
-
 #[somehal::entry]
 fn main(_args: &somehal::BootInfo) -> ! {
     test_base::init_test();
-    test_base::test_suit::set_cpu_interface(&CpuImpl);
+    test_base::test_suit::set_test_interface(&CpuImpl);
     init_gic();
 
     test_suit::ppi::test_irq();
@@ -117,6 +84,41 @@ fn irq_handler() {
 // 返回None表示中断已处理
 fn handle_list(intid: IntId) -> Option<()> {
     test_suit::ppi::handle(intid)?;
-
+    test_suit::sgi::handle(intid)?;
     Some(())
+}
+
+struct CpuImpl;
+
+impl test_base::test_suit::TestIf for CpuImpl {
+    fn set_irq_enable(&self, intid: IntId, enable: bool) {
+        let cpu_if = CPU_IF.lock();
+        if let Some(cpu) = cpu_if.as_ref() {
+            cpu.set_irq_enable(intid, enable);
+        } else {
+            panic!("CPU interface not initialized");
+        }
+    }
+
+    fn set_priority(&self, intid: IntId, priority: u8) {
+        let cpu_if = CPU_IF.lock();
+        if let Some(cpu) = cpu_if.as_ref() {
+            cpu.set_priority(intid, priority);
+        } else {
+            panic!("CPU interface not initialized");
+        }
+    }
+
+    fn is_irq_enable(&self, intid: IntId) -> bool {
+        let cpu_if = CPU_IF.lock();
+        if let Some(cpu) = cpu_if.as_ref() {
+            cpu.is_irq_enable(intid)
+        } else {
+            panic!("CPU interface not initialized");
+        }
+    }
+
+    fn sgi_to_current(&self, intid: IntId) {
+        GIC.lock();
+    }
 }

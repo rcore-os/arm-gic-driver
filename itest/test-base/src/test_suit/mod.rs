@@ -1,15 +1,18 @@
 use arm_gic_driver::IntId;
 
 pub mod ppi;
+pub mod sgi;
 
-pub trait ICpuIf: Send + Sync {
+pub trait TestIf: Send + Sync {
     fn set_irq_enable(&self, intid: IntId, enable: bool);
     fn set_priority(&self, intid: IntId, priority: u8);
     fn is_irq_enable(&self, intid: IntId) -> bool;
+
+    fn sgi_to_current(&self, intid: IntId);
 }
 
 struct CpuInterfaceEmpty;
-impl ICpuIf for CpuInterfaceEmpty {
+impl TestIf for CpuInterfaceEmpty {
     fn set_irq_enable(&self, _intid: IntId, _enable: bool) {
         unimplemented!()
     }
@@ -19,16 +22,20 @@ impl ICpuIf for CpuInterfaceEmpty {
     fn is_irq_enable(&self, _intid: IntId) -> bool {
         unimplemented!()
     }
-}
 
-static mut CPU_IF: &dyn ICpuIf = &CpuInterfaceEmpty;
-
-pub fn set_cpu_interface(iface: &'static dyn ICpuIf) {
-    unsafe {
-        CPU_IF = iface;
+    fn sgi_to_current(&self, intid: IntId) {
+        todo!()
     }
 }
 
-fn cpu_interface() -> &'static dyn ICpuIf {
-    unsafe { CPU_IF }
+static mut IF: &dyn TestIf = &CpuInterfaceEmpty;
+
+pub fn set_test_interface(iface: &'static dyn TestIf) {
+    unsafe {
+        IF = iface;
+    }
+}
+
+fn test_if() -> &'static dyn TestIf {
+    unsafe { IF }
 }

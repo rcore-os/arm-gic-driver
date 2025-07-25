@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use arm_gic_driver::IntId;
 use log::*;
 
-use crate::test_suit::cpu_interface;
+use crate::test_suit::test_if;
 
 static TIMER_INTERRUPT_FIRED: AtomicBool = AtomicBool::new(false);
 
@@ -23,15 +23,15 @@ pub fn test_irq() {
     // 配置定时器中断
     {
         // 设置中断优先级 (较高优先级)
-        cpu_interface().set_priority(timer_irq, 0x80);
+        test_if().set_priority(timer_irq, 0x80);
         debug!("Set timer interrupt priority to 0x80");
 
         // 启用定时器中断
-        cpu_interface().set_irq_enable(timer_irq, true);
+        test_if().set_irq_enable(timer_irq, true);
         debug!("Enabled timer interrupt");
 
         // 检查中断是否已启用
-        let enabled = cpu_interface().is_irq_enable(timer_irq);
+        let enabled = test_if().is_irq_enable(timer_irq);
         debug!("Timer interrupt enabled: {enabled}");
         assert!(enabled, "Timer interrupt should be enabled");
     }
@@ -95,7 +95,7 @@ pub fn test_irq() {
             }
 
             // 禁用中断
-            cpu_interface().set_irq_enable(timer_irq, false);
+            test_if().set_irq_enable(timer_irq, false);
 
             panic!("Timer interrupt test failed: interrupt did not fire within 2ms");
         }
@@ -111,7 +111,7 @@ pub fn test_irq() {
     }
 
     // 禁用中断
-    cpu_interface().set_irq_enable(timer_irq, false);
+    test_if().set_irq_enable(timer_irq, false);
     debug!("Disabled timer interrupt");
 
     debug!("PPI test completed successfully");
