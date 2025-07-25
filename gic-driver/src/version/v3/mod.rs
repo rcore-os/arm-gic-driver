@@ -19,11 +19,44 @@ use crate::{
 use gicd::*;
 use gicr::*;
 
+/// Affinity routing information for GICv3.
+///
+/// Represents the multi-level affinity routing used in GICv3 to identify
+/// CPU cores in a hierarchical manner. This matches the MPIDR_EL1 register
+/// format used by ARMv8 processors.
+///
+/// # Affinity Levels
+///
+/// - `aff0`: Level 0 affinity (typically core within cluster)
+/// - `aff1`: Level 1 affinity (typically cluster within group)  
+/// - `aff2`: Level 2 affinity (typically group within system)
+/// - `aff3`: Level 3 affinity (highest level, for large systems)
+///
+/// # Examples
+///
+/// ```
+/// use arm_gic_driver::v3::Affinity;
+///
+/// // Create affinity for core 2 in cluster 1
+/// let aff = Affinity {
+///     aff0: 2,   // Core 2
+///     aff1: 1,   // Cluster 1  
+///     aff2: 0,   // Group 0
+///     aff3: 0,   // System 0
+/// };
+///
+/// // Get current CPU's affinity
+/// let current = Affinity::current();
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Affinity {
+    /// Affinity level 0 (lowest level, typically core ID within cluster)
     pub aff0: u8,
+    /// Affinity level 1 (typically cluster ID within group)
     pub aff1: u8,
+    /// Affinity level 2 (typically group ID within system)
     pub aff2: u8,
+    /// Affinity level 3 (highest level, for very large systems)
     pub aff3: u8,
 }
 
@@ -34,6 +67,29 @@ impl Affinity {
             | ((self.aff2 as u32) << 16)
             | ((self.aff3 as u32) << 24)
     }
+
+    /// Create an `Affinity` from an MPIDR register value.
+    ///
+    /// Extracts the affinity levels from the Multiprocessor Affinity Register
+    /// (MPIDR_EL1) which uniquely identifies each CPU core.
+    ///
+    /// # Arguments
+    ///
+    /// * `mpidr` - The MPIDR_EL1 register value
+    ///
+    /// # Returns
+    ///
+    /// An `Affinity` structure with the extracted affinity levels.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use arm_gic_driver::v3::Affinity;
+    /// use aarch64_cpu::registers::MPIDR_EL1;
+    ///
+    /// let mpidr_value = MPIDR_EL1.get();
+    /// let affinity = Affinity::from_mpidr(mpidr_value);
+    /// ```
     pub fn from_mpidr(mpidr: u64) -> Self {
         let val = LocalRegisterCopy::<u64, MPIDR_EL1::Register>::new(mpidr);
         Self {
@@ -44,12 +100,65 @@ impl Affinity {
         }
     }
 
+    /// Get the affinity of the current CPU core.
+    ///
+    /// Reads the MPIDR_EL1 register to determine the current CPU's affinity.
+    /// This is commonly used to identify which CPU core is executing the code.
+    ///
+    /// # Returns
+    ///
+    /// An `Affinity` structure representing the current CPU's affinity.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use arm_gic_driver::v3::Affinity;
+    ///
+    /// let current_cpu = Affinity::current();
+    /// println!("Running on CPU {}.{}.{}.{}",
+    ///          current_cpu.aff3, current_cpu.aff2,
+    ///          current_cpu.aff1, current_cpu.aff0);
+    /// ```
     pub fn current() -> Self {
         Self::from_mpidr(MPIDR_EL1.get())
     }
 }
 
-/// GICv3 driver.
+/// GICv3 driver implementation.
+///
+/// This structure provides the main interface for controlling a GICv3 interrupt controller.
+/// It manages both the Distributor (GICD) for system-wide interrupt control and provides
+/// access to Redistributors (GICR) for per-CPU interrupt management.
+///
+/// # Architecture
+///
+/// GICv3 consists of several components:
+/// - **Distributor**: Controls SPIs (Shared Peripheral Interrupts) and global configuration
+/// - **Redistributors**: Handle SGIs (Software Generated Interrupts) and PPIs (Private Peripheral Interrupts) for each CPU
+/// - **CPU Interface**: System register-based interface for interrupt acknowledgment and EOI
+///
+/// # Security States
+///
+/// GICv3 supports different security configurations:
+/// - **Single Security State**: All interrupts treated equally (DS=1)
+/// - **Two Security States**: Separate Secure and Non-secure interrupt handling (DS=0)
+///
+/// # Examples
+///
+/// ```no_run
+/// use arm_gic_driver::{VirtAddr, v3::Gic};
+///
+/// // Initialize GICv3 with memory-mapped register addresses
+/// let gicd_addr = VirtAddr::new(0x0800_0000);
+/// let gicr_addr = VirtAddr::new(0x0806_0000);
+///
+/// let mut gic = unsafe { Gic::new(gicd_addr, gicr_addr) };
+/// gic.init();
+///
+/// // Initialize CPU interface for current CPU
+/// let mut cpu_if = gic.cpu_interface();
+/// cpu_if.init_current_cpu().unwrap();
+/// ```
 pub struct Gic {
     gicd: VirtAddr,
     #[allow(dead_code)]
@@ -60,9 +169,31 @@ pub struct Gic {
 unsafe impl Send for Gic {}
 
 impl Gic {
+    /// Create a new GICv3 driver instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `gicd` - Virtual address of the GIC Distributor register block
+    /// * `gicr` - Virtual address of the GIC Redistributor register block
+    ///
     /// # Safety
     ///
-    /// The addresses must be valid.
+    /// The caller must ensure that:
+    /// - The provided addresses point to valid, properly mapped GICv3 register blocks
+    /// - The memory regions remain valid for the lifetime of the `Gic` instance
+    /// - Only one `Gic` instance controls these hardware resources at a time
+    /// - The addresses are correctly aligned according to GICv3 specification
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use arm_gic_driver::{VirtAddr, v3::Gic};
+    ///
+    /// let gicd_base = VirtAddr::new(0x0800_0000);
+    /// let gicr_base = VirtAddr::new(0x0806_0000);
+    ///
+    /// let gic = unsafe { Gic::new(gicd_base, gicr_base) };
+    /// ```
     pub const unsafe fn new(gicd: VirtAddr, gicr: VirtAddr) -> Self {
         Self {
             gicd,
@@ -100,6 +231,21 @@ impl Gic {
     /// 4. Configure CTLR based on security state
     /// 5. Enable affinity routing
     /// 6. Enable appropriate interrupt groups
+    ///
+    /// # Panics
+    ///
+    /// Panics if register write operations timeout, indicating hardware issues.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use arm_gic_driver::{VirtAddr, v3::Gic};
+    ///
+    /// let mut gic = unsafe {
+    ///     Gic::new(VirtAddr::new(0x0800_0000), VirtAddr::new(0x0806_0000))
+    /// };
+    /// gic.init(); // Initialize the distributor
+    /// ```
     pub fn init(&mut self) {
         // Read current configuration to determine security state
 
@@ -124,11 +270,22 @@ impl Gic {
         self.gicd().reset_registers();
 
         let ctrl = match self.security_state {
-            SecurityState::Secure => (CTLR_S::EnableGrp1NS::SET + CTLR_S::ARE_NS::SET).value,
+            SecurityState::Secure => {
+                // In secure state, enable Group 1 Non-secure and Affinity Routing for Non-secure
+                (CTLR_S::EnableGrp0::SET
+                    + CTLR_S::EnableGrp1NS::SET
+                    + CTLR_S::ARE_S::SET
+                    + CTLR_S::ARE_NS::SET)
+                    .value
+            }
             SecurityState::NonSecure => {
+                // In non-secure state, enable Group 1 and Affinity Routing
                 (CTLR_NS::EnableGrp1::SET + CTLR_NS::EnableGrp1A::SET + CTLR_NS::ARE_NS::SET).value
             }
-            SecurityState::Single => (CTLR_ONE::EnableGrp1::SET + CTLR_ONE::ARE::SET).value,
+            SecurityState::Single => {
+                // In single security state, enable both groups and Affinity Routing
+                (CTLR_ONE::EnableGrp0::SET + CTLR_ONE::EnableGrp1::SET + CTLR_ONE::ARE::SET).value
+            }
         };
         self.gicd().CTLR.set(ctrl);
 
@@ -140,6 +297,25 @@ impl Gic {
         }
     }
 
+    /// Get the maximum interrupt ID supported by this GIC implementation.
+    ///
+    /// Returns the highest interrupt ID that can be used with this GIC.
+    /// This is determined by the GICD_TYPER.IDbits field which indicates
+    /// the number of interrupt ID bits implemented.
+    ///
+    /// # Returns
+    ///
+    /// The maximum interrupt ID (typically 1019 for standard GICv3, or higher
+    /// for implementations with extended interrupt ID support).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let max_id = gic.max_intid();
+    /// println!("GIC supports interrupt IDs up to {}", max_id);
+    /// ```
     pub fn max_intid(&self) -> u32 {
         self.gicd().max_intid()
     }
@@ -183,6 +359,24 @@ impl Gic {
         panic!("No current redistributor")
     }
 
+    /// Get a CPU interface for the current CPU.
+    ///
+    /// Returns a `CpuInterface` that provides access to the current CPU's
+    /// interrupt interface, including SGI/PPI control and interrupt
+    /// acknowledgment/completion operations.
+    ///
+    /// # Returns
+    ///
+    /// A `CpuInterface` instance for the current CPU core.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let mut cpu_if = gic.cpu_interface();
+    /// cpu_if.init_current_cpu().unwrap();
+    /// ```
     pub fn cpu_interface(&self) -> CpuInterface {
         CpuInterface {
             rd: self.current_rd().as_ptr(),
@@ -190,6 +384,31 @@ impl Gic {
         }
     }
 
+    /// Enable or disable a shared peripheral interrupt (SPI).
+    ///
+    /// This function controls the enable state of SPIs through the distributor.
+    /// Private interrupts (SGIs and PPIs) must be controlled through the
+    /// CPU interface instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `intid` - The interrupt ID to configure (must be an SPI)
+    /// * `enable` - `true` to enable the interrupt, `false` to disable it
+    ///
+    /// # Panics
+    ///
+    /// Panics if `intid` represents a private interrupt (SGI or PPI).
+    /// Use the CPU interface for private interrupt control.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{IntId, VirtAddr, v3::Gic};
+    /// # let mut gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let spi = IntId::spi(42);
+    /// gic.set_irq_enable(spi, true);  // Enable SPI 42
+    /// gic.set_irq_enable(spi, false); // Disable SPI 42
+    /// ```
     pub fn set_irq_enable(&mut self, intid: IntId, enable: bool) {
         assert!(
             !intid.is_private(),
@@ -203,18 +422,101 @@ impl Gic {
         }
     }
 
+    /// Check if an interrupt is enabled.
+    ///
+    /// Returns the enable state of the specified interrupt.
+    /// For SPIs, this checks the distributor registers.
+    /// For private interrupts, use the CPU interface instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The interrupt ID to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the interrupt is enabled, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{IntId, VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let spi = IntId::spi(42);
+    /// if gic.is_irq_enable(spi) {
+    ///     println!("SPI 42 is enabled");
+    /// }
+    /// ```
     pub fn is_irq_enable(&self, id: IntId) -> bool {
         self.gicd().ISENABLER.get_irq_bit(id.into())
     }
 
+    /// Set the priority of an interrupt.
+    ///
+    /// Sets the priority level for the specified interrupt. Lower values
+    /// indicate higher priority. The actual number of priority bits
+    /// implemented varies by GIC implementation.
+    ///
+    /// # Arguments
+    ///
+    /// * `intid` - The interrupt ID to configure
+    /// * `priority` - Priority value (0 = highest, 255 = lowest)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{IntId, VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let spi = IntId::spi(42);
+    /// gic.set_priority(spi, 0x80); // Set to medium priority
+    /// ```
     pub fn set_priority(&self, intid: IntId, priority: u8) {
         self.gicd().set_priority(intid.to_u32(), priority);
     }
 
+    /// Get the priority of an interrupt.
+    ///
+    /// Returns the current priority level of the specified interrupt.
+    ///
+    /// # Arguments
+    ///
+    /// * `intid` - The interrupt ID to query
+    ///
+    /// # Returns
+    ///
+    /// The current priority value (0 = highest, 255 = lowest).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{IntId, VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let spi = IntId::spi(42);
+    /// let priority = gic.get_priority(spi);
+    /// println!("SPI 42 priority: {}", priority);
+    /// ```
     pub fn get_priority(&self, intid: IntId) -> u8 {
         self.gicd().get_priority(intid.to_u32())
     }
 
+    /// Set the active state of an interrupt.
+    ///
+    /// Controls whether an interrupt is marked as active. An active interrupt
+    /// is one that has been acknowledged but not yet completed (EOI sent).
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The interrupt ID to modify
+    /// * `active` - `true` to mark as active, `false` to clear active state
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{IntId, VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let spi = IntId::spi(42);
+    /// gic.set_active(spi, true);  // Mark as active
+    /// gic.set_active(spi, false); // Clear active state
+    /// ```
     pub fn set_active(&self, id: IntId, active: bool) {
         if active {
             self.gicd().ISACTIVER.set_irq_bit(id.into());
@@ -223,10 +525,51 @@ impl Gic {
         }
     }
 
+    /// Check if an interrupt is active.
+    ///
+    /// Returns whether the specified interrupt is currently in the active state.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The interrupt ID to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the interrupt is active, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{IntId, VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let spi = IntId::spi(42);
+    /// if gic.is_active(spi) {
+    ///     println!("SPI 42 is active");
+    /// }
+    /// ```
     pub fn is_active(&self, id: IntId) -> bool {
         self.gicd().ISACTIVER.get_irq_bit(id.into())
     }
 
+    /// Set the pending state of an interrupt.
+    ///
+    /// Controls whether an interrupt is marked as pending. A pending interrupt
+    /// is one that has been signaled but not yet acknowledged.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The interrupt ID to modify
+    /// * `pending` - `true` to mark as pending, `false` to clear pending state
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{IntId, VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let spi = IntId::spi(42);
+    /// gic.set_pending(spi, true);  // Trigger interrupt
+    /// gic.set_pending(spi, false); // Clear pending state
+    /// ```
     pub fn set_pending(&self, id: IntId, pending: bool) {
         if pending {
             self.gicd().set_pending(id.into());
@@ -235,18 +578,96 @@ impl Gic {
         }
     }
 
+    /// Check if an interrupt is pending.
+    ///
+    /// Returns whether the specified interrupt is currently pending.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The interrupt ID to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the interrupt is pending, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{IntId, VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let spi = IntId::spi(42);
+    /// if gic.is_pending(spi) {
+    ///     println!("SPI 42 is pending");
+    /// }
+    /// ```
     pub fn is_pending(&self, id: IntId) -> bool {
         self.gicd().ISPENDR.get_irq_bit(id.into())
     }
 
+    /// Get the raw IIDR (Implementer Identification Register) value.
+    ///
+    /// Returns the raw GICD_IIDR register value which contains
+    /// implementation-specific identification information.
+    ///
+    /// # Returns
+    ///
+    /// The raw IIDR register value containing implementer ID, revision,
+    /// variant, and product ID fields.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let iidr = gic.iidr_raw();
+    /// println!("GIC implementer ID: {:#x}", iidr);
+    /// ```
     pub fn iidr_raw(&self) -> u32 {
         self.gicd().IIDR.get()
     }
 
+    /// Get the raw TYPER (Type Register) value.
+    ///
+    /// Returns the raw GICD_TYPER register value which contains
+    /// information about the GIC configuration and capabilities.
+    ///
+    /// # Returns
+    ///
+    /// The raw TYPER register value containing information about
+    /// interrupt lines, CPU interfaces, security extensions, etc.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let typer = gic.typer_raw();
+    /// let it_lines = (typer & 0x1f) + 1;
+    /// println!("GIC supports {} interrupt lines", it_lines * 32);
+    /// ```
     pub fn typer_raw(&self) -> u32 {
         self.gicd().TYPER.get()
     }
 
+    /// Set the trigger type configuration for an interrupt.
+    ///
+    /// Configures whether an interrupt is triggered by signal edges or levels.
+    /// This affects how the GIC samples and processes the interrupt signal.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The interrupt ID to configure
+    /// * `cfg` - The trigger type (`Edge` or `Level`)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use arm_gic_driver::{IntId, Trigger, VirtAddr, v3::Gic};
+    /// # let gic = unsafe { Gic::new(VirtAddr::new(0), VirtAddr::new(0)) };
+    /// let spi = IntId::spi(42);
+    /// gic.set_cfg(spi, Trigger::Edge);  // Configure as edge-triggered
+    /// gic.set_cfg(spi, Trigger::Level); // Configure as level-triggered
+    /// ```
     pub fn set_cfg(&self, id: IntId, cfg: Trigger) {
         let int_num = id.to_u32();
         let reg_index = (int_num / 16) as usize;
@@ -351,31 +772,43 @@ impl CpuInterface {
 
         // 3. Configure CPU interface system registers
         if CurrentEL.read(CurrentEL::EL) == 2 {
-            ICC_SRE_EL2
-                .write(ICC_SRE_EL2::SRE::SET + ICC_SRE_EL2::DFB::SET + ICC_SRE_EL2::DIB::SET);
-            ICC_CTLR_EL1.modify(ICC_CTLR_EL1::EOIMODE::SET);
+            ICC_SRE_EL2.write(
+                ICC_SRE_EL2::SRE::SET
+                    + ICC_SRE_EL2::DFB::SET
+                    + ICC_SRE_EL2::DIB::SET
+                    + ICC_SRE_EL2::ENABLE::SET,
+            );
         } else {
             ICC_SRE_EL1
                 .write(ICC_SRE_EL1::SRE::SET + ICC_SRE_EL1::DFB::SET + ICC_SRE_EL1::DIB::SET);
         }
 
-        // 4. Set interrupt priority mask to allow all priorities
+        // 4. Set interrupt priority mask to allow all priorities (using 8-bit priority)
         ICC_PMR_EL1.write(ICC_PMR_EL1::PRIORITY.val(0xFF));
 
-        // 5. Enable Group 1 interrupts
-        ICC_IGRPEN1_EL1.write(ICC_IGRPEN1_EL1::ENABLE::SET);
-
-        // 6. Configure control register based on security state
+        // 5. Enable appropriate interrupt groups based on security state
         match self.security_state {
             SecurityState::Single => {
-                // In single security state, use CBPR (Common Binary Point Register)
+                // In single security state, enable both Group 0 and Group 1
+                ICC_IGRPEN0_EL1.write(ICC_IGRPEN0_EL1::ENABLE::SET);
+                ICC_IGRPEN1_EL1.write(ICC_IGRPEN1_EL1::ENABLE::SET);
+                // Use common binary point register
                 ICC_CTLR_EL1.modify(ICC_CTLR_EL1::CBPR::SET);
             }
-            SecurityState::Secure => {}
+            SecurityState::Secure => {
+                // In secure state, enable both groups
+                ICC_IGRPEN0_EL1.write(ICC_IGRPEN0_EL1::ENABLE::SET);
+                ICC_IGRPEN1_EL1.write(ICC_IGRPEN1_EL1::ENABLE::SET);
+            }
             SecurityState::NonSecure => {
+                // In non-secure state, only enable Group 1
+                ICC_IGRPEN1_EL1.write(ICC_IGRPEN1_EL1::ENABLE::SET);
                 ICC_CTLR_EL1.modify(ICC_CTLR_EL1::CBPR::SET);
             }
         }
+
+        // 6. Configure EOI mode - default to single EOI mode
+        ICC_CTLR_EL1.modify(ICC_CTLR_EL1::EOIMODE::CLEAR);
 
         trace!("CPU interface initialized successfully");
         Ok(())
@@ -485,5 +918,21 @@ impl CpuInterface {
             "Cannot check pending state for non-private interrupt: {id:?}"
         );
         self.rd().sgi.is_pending(id)
+    }
+
+    pub fn set_cfg(&self, id: IntId, cfg: Trigger) {
+        assert!(
+            id.is_private(),
+            "Cannot set config for non-private interrupt: {id:?}"
+        );
+        self.rd().sgi.set_cfgr(id, cfg);
+    }
+
+    pub fn get_cfg(&self, id: IntId) -> Trigger {
+        assert!(
+            id.is_private(),
+            "Cannot get config for non-private interrupt: {id:?}"
+        );
+        self.rd().sgi.get_cfgr(id)
     }
 }

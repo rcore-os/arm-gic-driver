@@ -1,5 +1,7 @@
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
+use crate::{IntId, define::Trigger};
+
 register_structs! {
     #[allow(non_snake_case)]
     pub DistributorReg {
@@ -179,6 +181,47 @@ impl DistributorReg {
     pub fn max_spi_num(&self) -> u32 {
         let it_lines_number = self.TYPER.read(TYPER::ITLinesNumber); // ITLinesNumber field
         (it_lines_number + 1) * 32
+    }
+
+    pub fn set_cfg(&self, id: IntId, cfg: Trigger) {
+        let int_num = id.to_u32();
+        let reg_index = (int_num / 16) as usize;
+        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
+
+        assert!(
+            reg_index < self.ICFGR.len(),
+            "Invalid interrupt ID for config: {id:?}"
+        );
+
+        let current = self.ICFGR[reg_index].get();
+        let mask = 1 << bit_offset;
+
+        let new_value = match cfg {
+            Trigger::Level => current & !mask, // Clear bit for level-triggered
+            Trigger::Edge => current | mask,   // Set bit for edge-triggered
+        };
+
+        self.ICFGR[reg_index].set(new_value);
+    }
+
+    pub fn get_cfg(&self, id: IntId) -> Trigger {
+        let int_num = id.to_u32();
+        let reg_index = (int_num / 16) as usize;
+        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
+
+        assert!(
+            reg_index < self.ICFGR.len(),
+            "Invalid interrupt ID for config: {id:?}"
+        );
+
+        let current = self.ICFGR[reg_index].get();
+        let mask = 1 << bit_offset;
+
+        if current & mask != 0 {
+            Trigger::Edge
+        } else {
+            Trigger::Level
+        }
     }
 }
 

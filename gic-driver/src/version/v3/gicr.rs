@@ -388,11 +388,13 @@ impl SGI {
 
     /// Set interrupt configuration (edge/level triggered)
     pub fn set_cfgr(&self, intid: IntId, trigger: Trigger) {
-        let clean = !((intid.to_u32() % 16) << 1);
+        let int_id = intid.to_u32();
+        let bit_offset = (int_id % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
+        let clean = !(1u32 << bit_offset);
         let bit: u32 = match trigger {
             Trigger::Edge => 1,
             Trigger::Level => 0,
-        } << ((intid.to_u32() % 16) << 1);
+        } << bit_offset;
 
         if intid.is_sgi() {
             let mut mask = self.ICFGR[0].get();
@@ -404,6 +406,23 @@ impl SGI {
             mask &= clean;
             mask |= bit;
             self.ICFGR[1].set(mask);
+        }
+    }
+
+    pub fn get_cfgr(&self, intid: IntId) -> Trigger {
+        let int_id = intid.to_u32();
+        let bit_offset = (int_id % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
+        let mask = 1u32 << bit_offset;
+        if intid.is_sgi() {
+            if self.ICFGR[0].get() & mask != 0 {
+                Trigger::Edge
+            } else {
+                Trigger::Level
+            }
+        } else if self.ICFGR[1].get() & mask != 0 {
+            Trigger::Edge
+        } else {
+            Trigger::Level
         }
     }
 

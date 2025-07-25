@@ -16,17 +16,67 @@ use core::{
 pub use define::IntId;
 pub use version::*;
 
+/// Virtual address wrapper for memory-mapped register access.
+///
+/// This type provides a safe wrapper around virtual addresses used for accessing
+/// memory-mapped registers in the GIC. It ensures type safety while allowing
+/// efficient pointer operations.
+///
+/// # Examples
+///
+/// ```no_run
+/// use arm_gic_driver::VirtAddr;
+///
+/// let addr = VirtAddr::new(0xF900_0000);
+/// let ptr: *mut u32 = addr.as_ptr();
+/// ```
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct VirtAddr(usize);
 
 impl VirtAddr {
-    /// Create a new `VirtAddr` from a raw pointer.
+    /// Create a new `VirtAddr` from a raw address value.
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - The virtual address as a usize value
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use arm_gic_driver::VirtAddr;
+    ///
+    /// let addr = VirtAddr::new(0xF900_0000);
+    /// ```
     pub const fn new(val: usize) -> Self {
         Self(val)
     }
 
-    /// Get the raw pointer as a `*mut u8`.
+    /// Get the virtual address as a raw pointer of the specified type.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - The target pointer type
+    ///
+    /// # Returns
+    ///
+    /// A raw mutable pointer to type `T`
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that:
+    /// - The address is valid for the target type `T`
+    /// - The memory region is properly mapped and accessible
+    /// - Appropriate synchronization is used for concurrent access
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use arm_gic_driver::VirtAddr;
+    ///
+    /// let addr = VirtAddr::new(0xF900_0000);
+    /// let ptr: *mut u32 = addr.as_ptr();
+    /// ```
     pub const fn as_ptr<T>(&self) -> *mut T {
         self.0 as *mut T
     }

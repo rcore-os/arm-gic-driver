@@ -240,44 +240,11 @@ impl Gic {
     }
 
     pub fn set_cfg(&self, id: IntId, cfg: Trigger) {
-        let int_num = id.to_u32();
-        let reg_index = (int_num / 16) as usize;
-        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
-
-        assert!(
-            reg_index < self.gicd().ICFGR.len(),
-            "Invalid interrupt ID for config: {id:?}"
-        );
-
-        let current = self.gicd().ICFGR[reg_index].get();
-        let mask = 1 << bit_offset;
-
-        let new_value = match cfg {
-            Trigger::Level => current & !mask, // Clear bit for level-triggered
-            Trigger::Edge => current | mask,   // Set bit for edge-triggered
-        };
-
-        self.gicd().ICFGR[reg_index].set(new_value);
+        self.gicd().set_cfg(id, cfg);
     }
 
     pub fn get_cfg(&self, id: IntId) -> Trigger {
-        let int_num = id.to_u32();
-        let reg_index = (int_num / 16) as usize;
-        let bit_offset = (int_num % 16) * 2 + 1; // Each interrupt uses 2 bits, we use bit 1 for edge/level
-
-        assert!(
-            reg_index < self.gicd().ICFGR.len(),
-            "Invalid interrupt ID for config: {id:?}"
-        );
-
-        let current = self.gicd().ICFGR[reg_index].get();
-        let mask = 1 << bit_offset;
-
-        if current & mask != 0 {
-            Trigger::Edge
-        } else {
-            Trigger::Level
-        }
+        self.gicd().get_cfg(id)
     }
 }
 
@@ -548,6 +515,14 @@ impl CpuInterface {
             "Cannot check pending state for non-private interrupt: {id:?}"
         );
         self.gicd().ISPENDR.get_irq_bit(id.into())
+    }
+
+    pub fn set_cfg(&self, id: IntId, trigger: Trigger) {
+        self.gicd().set_cfg(id, trigger);
+    }
+
+    pub fn get_cfg(&self, id: IntId) -> Trigger {
+        self.gicd().get_cfg(id)
     }
 }
 

@@ -121,12 +121,15 @@ impl DistributorReg {
         // Read current value of GICD_NSACR0
         let original_value = self.NSACR[0].get();
 
-        // Test pattern - use a value that won't affect system operation
-        // We use bit 1 (for interrupt 1, which is a PPI and ignored by NSACR anyway)
-        let test_pattern = 0x00000002u32;
+        // Test pattern - use bits that are guaranteed to be writable in secure state
+        // We use bits for interrupts 32-63 (first register after SGI/PPI range)
+        let test_pattern = 0x55555555u32; // Alternating pattern
 
         // Write test pattern to GICD_NSACR0
         self.NSACR[0].set(test_pattern);
+
+        // Memory barrier to ensure write completes
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
         // Read back the value
         let read_value = self.NSACR[0].get();
@@ -138,9 +141,13 @@ impl DistributorReg {
         if read_value == test_pattern {
             // Write succeeded and persisted - we're in Secure state
             SecurityState::Secure
-        } else {
+        } else if read_value == 0 {
             // Write was ignored (RAZ/WI behavior) - we're in Non-secure state
             SecurityState::NonSecure
+        } else {
+            // Partial write success indicates some bits are reserved
+            // This still suggests we're in Secure state but some bits are read-only
+            SecurityState::Secure
         }
     }
 
@@ -340,8 +347,10 @@ impl DistributorReg {
 
     /// Set interrupt routing (affinity) using IROUTER registers
     pub fn set_interrupt_route(&self, intid: u32, aff: Option<Affinity>) {
+        // Check if this is a valid SPI in the standard range
         if !SPI_RANGE.contains(&intid) {
-            return; // Only SPIs (32-1019) can be routed
+            // TODO: Check for Extended SPI support in TYPER2 register when extended range is used
+            return; // Only SPIs (32-1019) can be routed currently
         }
 
         // Calculate IROUTER register index
@@ -360,12 +369,16 @@ impl DistributorReg {
                 aff2,
                 aff3,
             }) => {
+                // Set specific affinity routing
                 route_value |= aff0 as u64;
                 route_value |= (aff1 as u64) << 8;
                 route_value |= (aff2 as u64) << 16;
                 route_value |= (aff3 as u64) << 32;
+                // Ensure Interrupt_Routing_Mode is 0 for specific routing
+                route_value &= !(1u64 << 31);
             }
             None => {
+                // Set "any participating PE" routing mode
                 route_value |= 1u64 << 31;
             }
         }
