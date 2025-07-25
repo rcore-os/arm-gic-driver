@@ -246,5 +246,3 @@ define_readwrite_register! {
         ENABLE OFFSET(0) NUMBITS(1) [],
     }
 }
-
-
