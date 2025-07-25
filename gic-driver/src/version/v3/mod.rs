@@ -1,37 +1,17 @@
 use core::ptr::NonNull;
 
-use aarch64_cpu::{
-    asm::barrier,
-    registers::{CurrentEL, MPIDR_EL1},
-};
+use aarch64_cpu::{asm::barrier, registers::*};
 use log::*;
 use tock_registers::{LocalRegisterCopy, interfaces::*};
-
-macro_rules! cpu_read {
-    ($name: expr) => {{
-        let x: usize;
-        unsafe {
-            core::arch::asm!(concat!("mrs {0}, ", $name), out(reg) x);
-        }
-        x
-    }};
-}
-
-macro_rules! cpu_write {
-    ($name: expr, $value: expr) => {{
-        let x = $value;
-        unsafe {
-            core::arch::asm!(concat!("msr ", $name, ", {0:x}"), in(reg) x);
-        }
-    }};
-}
 
 pub mod asm;
 mod gicd;
 mod gicr;
 
-use crate::VirtAddr;
-use asm::*;
+use crate::{
+    VirtAddr,
+    v3::asm::{ICC_IGRPEN1_EL1, ICC_SRE_EL1},
+};
 use gicd::*;
 use gicr::*;
 
