@@ -19,15 +19,15 @@ use crate::{
 use gicd::*;
 use gicr::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CPUTarget {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Affinity {
     pub aff0: u8,
     pub aff1: u8,
     pub aff2: u8,
     pub aff3: u8,
 }
 
-impl CPUTarget {
+impl Affinity {
     pub(crate) fn affinity(&self) -> u32 {
         self.aff0 as u32
             | ((self.aff1 as u32) << 8)
@@ -186,25 +186,20 @@ impl Gic {
         }
     }
 
-    pub fn irq_enable(&mut self, irq: IntId) {
+    pub fn set_enable(&mut self, intid: IntId, enable: bool) {
         assert!(
-            !irq.is_private(),
-            "Cannot enable private interrupts directly"
+            !intid.is_private(),
+            "Cannot enable/disable private interrupts directly"
         );
 
-        self.gicd().irq_enable(irq.to_u32());
+        if enable {
+            self.gicd().irq_enable(intid.to_u32());
+        } else {
+            self.gicd().irq_disable(intid.to_u32());
+        }
     }
 
-    pub fn irq_disable(&mut self, irq: IntId) {
-        assert!(
-            !irq.is_private(),
-            "Cannot disable private interrupts directly"
-        );
-
-        self.gicd().irq_disable(irq.to_u32());
-    }
-
-    pub fn irq_is_enabled(&self, id: IntId) -> bool {
+    pub fn is_enable(&self, id: IntId) -> bool {
         self.gicd().ISENABLER.get_irq_bit(id.into())
     }
 
@@ -288,6 +283,27 @@ impl Gic {
             Trigger::Level
         }
     }
+
+    /// If `affinity` is `None`, interrupts routed to any PE defined as a participating node.
+    pub fn set_target_cpu(&self, id: IntId, affinity: Option<Affinity>) {
+        // Only SPIs (Shared Peripheral Interrupts) can have their target CPU set
+        // SGIs and PPIs are always private to a specific CPU core
+        assert!(
+            !id.is_private(),
+            "Cannot set target CPU for private interrupt (SGI/PPI): {id:?}"
+        );
+        self.gicd().set_interrupt_route(id.to_u32(), affinity);
+    }
+
+    pub fn get_target_cpu(&self, id: IntId) -> Option<Affinity> {
+        // Only SPIs (Shared Peripheral Interrupts) can have their target CPU set
+        // SGIs and PPIs are always private to a specific CPU core
+        assert!(
+            !id.is_private(),
+            "Cannot get target CPU for private interrupt (SGI/PPI): {id:?}"
+        );
+        self.gicd().get_interrupt_route(id.to_u32())
+    }
 }
 
 /// Every CPU interface has its own GICC registers
@@ -310,7 +326,7 @@ impl CpuInterface {
     /// 2. Initialize SGI/PPI registers to known state
     /// 3. Configure CPU interface registers
     pub fn init_current_cpu(&mut self) -> Result<(), &'static str> {
-        let cpu = CPUTarget::current();
+        let cpu = Affinity::current();
         trace!(
             "CPU interface initialization for CPU: {:#x}",
             cpu.affinity()

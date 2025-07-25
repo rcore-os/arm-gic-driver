@@ -17,6 +17,21 @@ jobs:
         toolchain: ${{ matrix.rust-toolchain }}
         components: rust-src, clippy, rustfmt
         targets: ${{ matrix.targets }}
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: cargo-bin-cache
+        cache-targets: false
+      
+    - run: cargo install cargo-binutils
+    - uses: arceos-org/setup-qemu@v1
+      with:
+        version: ${{ env.qemu-version }}
+        arch_list: aarch64
+    - uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: libudev-dev
+        version: 1.0
+    - run: cargo install ostool
     - name: Check rust version
       run: rustc --version --verbose
     - name: Check code format

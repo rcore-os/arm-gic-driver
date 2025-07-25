@@ -3,6 +3,8 @@ use core::hint::spin_loop;
 use aarch64_cpu::asm::barrier;
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
+use crate::{define::SPI_RANGE, v3::Affinity};
+
 /// Access context for CTLR register operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecurityState {
@@ -337,39 +339,42 @@ impl DistributorReg {
     }
 
     /// Set interrupt routing (affinity) using IROUTER registers
-    pub fn set_interrupt_route(
-        &self,
-        intid: u32,
-        aff3: u8,
-        aff2: u8,
-        aff1: u8,
-        aff0: u8,
-        routing_mode: bool,
-    ) {
-        if (32..1020).contains(&intid) {
-            // Calculate IROUTER register index
-            // IROUTER registers start at SPI 32, so subtract 32
-            let router_idx = (intid - 32) as usize;
+    pub fn set_interrupt_route(&self, intid: u32, aff: Option<Affinity>) {
+        if !SPI_RANGE.contains(&intid) {
+            return; // Only SPIs (32-1019) can be routed
+        }
 
-            if router_idx < self.IROUTER.len() {
-                let mut route_value = 0u64;
+        // Calculate IROUTER register index
+        // IROUTER registers start at SPI 32, so subtract 32
+        let router_idx = (intid - 32) as usize;
+
+        if router_idx >= self.IROUTER.len() {
+            return; // Out of range for IROUTER registers
+        }
+
+        let mut route_value = 0u64;
+        match aff {
+            Some(Affinity {
+                aff0,
+                aff1,
+                aff2,
+                aff3,
+            }) => {
                 route_value |= aff0 as u64;
                 route_value |= (aff1 as u64) << 8;
                 route_value |= (aff2 as u64) << 16;
                 route_value |= (aff3 as u64) << 32;
-
-                if routing_mode {
-                    route_value |= 1u64 << 31; // Set Interrupt_Routing_Mode
-                }
-
-                self.IROUTER[router_idx].set(route_value);
+            }
+            None => {
+                route_value |= 1u64 << 31;
             }
         }
+        self.IROUTER[router_idx].set(route_value);
     }
 
     /// Get interrupt routing information
-    pub fn get_interrupt_route(&self, intid: u32) -> Option<(u8, u8, u8, u8, bool)> {
-        if (32..1020).contains(&intid) {
+    pub fn get_interrupt_route(&self, intid: u32) -> Option<Affinity> {
+        if SPI_RANGE.contains(&intid) {
             let router_idx = (intid - 32) as usize;
 
             if router_idx < self.IROUTER.len() {
@@ -380,7 +385,16 @@ impl DistributorReg {
                 let aff3 = ((route_value >> 32) & 0xFF) as u8;
                 let routing_mode = (route_value & (1u64 << 31)) != 0;
 
-                return Some((aff3, aff2, aff1, aff0, routing_mode));
+                return if routing_mode {
+                    None
+                } else {
+                    Some(Affinity {
+                        aff0,
+                        aff1,
+                        aff2,
+                        aff3,
+                    })
+                };
             }
         }
         None
@@ -472,6 +486,14 @@ impl DistributorReg {
         self.TYPER.read(TYPER::DVIS) != 0
     }
 
+    fn set_all_routing_to_current(&self, max_interrupts: u32) {
+        let current = Affinity::current();
+        for i in SPI_RANGE.start..max_interrupts {
+            // Set all SPIs to route to current CPU
+            self.set_interrupt_route(i, Some(current));
+        }
+    }
+
     /// Initialize for two security states configuration (from Secure state)
     /// This handles the case where DS=0 and security extensions are present
     pub fn reset_registers(&self) {
@@ -493,6 +515,8 @@ impl DistributorReg {
 
         // Configure all interrupts as level-sensitive
         self.configure_interrupt_config(max_spis);
+
+        self.set_all_routing_to_current(max_spis);
     }
 
     /// Wait for register write pending to clear

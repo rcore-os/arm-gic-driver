@@ -13,7 +13,7 @@ use core::{hint::spin_loop, ops::Index, ptr::NonNull};
 
 use tock_registers::{interfaces::*, register_bitfields, register_structs, registers::*};
 
-use crate::{IntId, define::Trigger, v3::CPUTarget};
+use crate::{IntId, define::Trigger, v3::Affinity};
 
 pub type RDv3Slice = RedistributorSlice<RedistributorV3>;
 #[allow(unused)]
@@ -93,10 +93,10 @@ impl<T: RedistributorItem> Iterator for RedistributorIter<T> {
     }
 }
 
-impl<T: RedistributorItem> Index<CPUTarget> for RedistributorSlice<T> {
+impl<T: RedistributorItem> Index<Affinity> for RedistributorSlice<T> {
     type Output = T;
 
-    fn index(&self, index: CPUTarget) -> &Self::Output {
+    fn index(&self, index: Affinity) -> &Self::Output {
         let affinity = index.affinity();
         for rd in self.iter() {
             let affi = unsafe { rd.as_ref() }.lpi_ref().TYPER.read(TYPER::Affinity) as u32;
