@@ -14,6 +14,7 @@ use crate::logger::init_log;
 pub mod lang_items;
 mod logger;
 mod mem;
+pub mod test_suit;
 
 pub const TEST_SUCCESS: &str = "All tests passed!";
 

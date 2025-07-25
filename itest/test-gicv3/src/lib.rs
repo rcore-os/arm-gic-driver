@@ -1,7 +1,9 @@
 #![no_std]
 #![cfg(target_os = "none")]
 
-use arm_gic_driver::{VirtAddr, v3};
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use arm_gic_driver::{IntId, VirtAddr, v3};
 use log::{debug, info};
 use spin::Mutex;
 use test_base::{somehal::mem::iomap, *};
@@ -9,10 +11,44 @@ static GIC: Mutex<v3::Gic> =
     Mutex::new(unsafe { v3::Gic::new(VirtAddr::new(0), VirtAddr::new(0)) });
 static CPU_IF: Mutex<Option<v3::CpuInterface>> = Mutex::new(None);
 
+struct CpuImpl;
+
+impl test_base::test_suit::ICpuIf for CpuImpl {
+    fn set_irq_enable(&self, intid: IntId, enable: bool) {
+        let cpu_if = CPU_IF.lock();
+        if let Some(cpu) = cpu_if.as_ref() {
+            cpu.set_irq_enable(intid, enable);
+        } else {
+            panic!("CPU interface not initialized");
+        }
+    }
+
+    fn set_priority(&self, intid: IntId, priority: u8) {
+        let cpu_if = CPU_IF.lock();
+        if let Some(cpu) = cpu_if.as_ref() {
+            cpu.set_priority(intid, priority);
+        } else {
+            panic!("CPU interface not initialized");
+        }
+    }
+
+    fn is_irq_enable(&self, intid: IntId) -> bool {
+        let cpu_if = CPU_IF.lock();
+        if let Some(cpu) = cpu_if.as_ref() {
+            cpu.is_irq_enable(intid)
+        } else {
+            panic!("CPU interface not initialized");
+        }
+    }
+}
+
 #[somehal::entry]
 fn main(_args: &somehal::BootInfo) -> ! {
     test_base::init_test();
+    test_base::test_suit::set_cpu_interface(&CpuImpl);
     init_gic();
+
+    test_suit::ppi::test_irq();
 
     info!("{TEST_SUCCESS}");
 }
@@ -58,4 +94,29 @@ fn init_gic() {
 }
 
 #[somehal::irq_handler]
-fn irq_handler() {}
+fn irq_handler() {
+    // debug!("IRQ handler invoked");
+    let g = CPU_IF.lock();
+    let cpu = g.as_ref().unwrap();
+    let ack = cpu.ack1();
+
+    debug!("Handling IRQ: {ack:?}");
+
+    if handle_list(ack).is_some() {
+        panic!("Unhandled IRQ: {ack:?}");
+    }
+
+    if !ack.is_special() {
+        cpu.eoi1(ack);
+        if cpu.eoi_mode() {
+            cpu.dir(ack);
+        }
+    }
+}
+
+// 返回None表示中断已处理
+fn handle_list(intid: IntId) -> Option<()> {
+    test_suit::ppi::handle(intid)?;
+
+    Some(())
+}

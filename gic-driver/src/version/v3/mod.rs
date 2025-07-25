@@ -826,6 +826,10 @@ impl CpuInterface {
         });
     }
 
+    pub fn eoi_mode(&self) -> bool {
+        ICC_CTLR_EL1.is_set(ICC_CTLR_EL1::EOIMODE)
+    }
+
     pub fn ack0(&self) -> IntId {
         let raw = ICC_IAR0_EL1.read(ICC_IAR0_EL1::INTID) as u32;
         unsafe { IntId::raw(raw) }
