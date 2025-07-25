@@ -102,11 +102,11 @@ fn test_systice_irq() {
         debug!("Set timer interrupt priority to 0x80");
 
         // 启用定时器中断
-        cpu.irq_enable(timer_irq);
+        cpu.set_irq_enable(timer_irq, true);
         debug!("Enabled timer interrupt");
 
         // 检查中断是否已启用
-        let enabled = cpu.irq_is_enabled(timer_irq);
+        let enabled = cpu.is_irq_enable(timer_irq);
         debug!("Timer interrupt enabled: {enabled}");
         assert!(enabled, "Timer interrupt should be enabled");
     }
@@ -173,7 +173,7 @@ fn test_systice_irq() {
             {
                 let cpu_if = CPU_IF.lock();
                 let cpu = cpu_if.as_ref().unwrap();
-                cpu.irq_disable(timer_irq);
+                cpu.set_irq_enable(timer_irq, false);
             }
 
             panic!("Timer interrupt test failed: interrupt did not fire within 2ms");
@@ -193,7 +193,7 @@ fn test_systice_irq() {
     {
         let cpu_if = CPU_IF.lock();
         let cpu = cpu_if.as_ref().unwrap();
-        cpu.irq_disable(timer_irq);
+        cpu.set_irq_enable(timer_irq, false);
         debug!("Disabled timer interrupt");
     }
 
@@ -219,11 +219,11 @@ fn test_sgi_to_current_cpu_irq() {
         debug!("Set SGI interrupt priority to 0x80");
 
         // 启用SGI中断
-        cpu.irq_enable(sgi_irq);
+        cpu.set_irq_enable(sgi_irq, true);
         debug!("Enabled SGI interrupt");
 
         // 检查中断是否已启用
-        let enabled = cpu.irq_is_enabled(sgi_irq);
+        let enabled = cpu.is_irq_enable(sgi_irq);
         debug!("SGI interrupt enabled: {enabled}");
         assert!(enabled, "SGI interrupt should be enabled");
     }
@@ -272,7 +272,7 @@ fn test_sgi_to_current_cpu_irq() {
             {
                 let cpu_if = CPU_IF.lock();
                 let cpu = cpu_if.as_ref().unwrap();
-                cpu.irq_disable(sgi_irq);
+                cpu.set_irq_enable(sgi_irq, false);
             }
 
             panic!("SGI interrupt test failed: interrupt did not fire within 2ms");
@@ -286,7 +286,7 @@ fn test_sgi_to_current_cpu_irq() {
     {
         let cpu_if = CPU_IF.lock();
         let cpu = cpu_if.as_ref().unwrap();
-        cpu.irq_disable(sgi_irq);
+        cpu.set_irq_enable(sgi_irq, false);
         debug!("Disabled SGI interrupt");
     }
 
@@ -300,37 +300,35 @@ fn irq_handler() {
     let cpu = g.as_ref().unwrap();
     let ack = cpu.ack();
 
-    if let Some(irq) = ack {
-        debug!("Handling IRQ: {irq:?}");
+    debug!("Handling IRQ: {ack:?}");
 
-        // 检查中断类型
-        match irq {
-            v2::Ack::Normal(intid) if intid == arm_gic_driver::IntId::ppi(14) => {
-                debug!("Timer interrupt received!");
-                TIMER_INTERRUPT_FIRED.store(true, Ordering::SeqCst);
+    // 检查中断类型
+    match ack {
+        v2::Ack::Other(intid) if intid == arm_gic_driver::IntId::ppi(14) => {
+            debug!("Timer interrupt received!");
+            TIMER_INTERRUPT_FIRED.store(true, Ordering::SeqCst);
 
-                // 禁用定时器以防止重复中断
-                unsafe {
-                    core::arch::asm!("msr cntp_ctl_el0, {}", in(reg) 0u64);
-                }
-            }
-            v2::Ack::SGI { intid, cpu_id } => {
-                if intid != arm_gic_driver::IntId::sgi(1) {
-                    panic!("Unexpected SGI interrupt: {intid:?}");
-                }
-                debug!("SGI interrupt received from CPU {cpu_id}!");
-                SGI_INTERRUPT_FIRED.store(true, Ordering::SeqCst);
-            }
-            _ => {
-                debug!("Other interrupt received: {irq:?}");
+            // 禁用定时器以防止重复中断
+            unsafe {
+                core::arch::asm!("msr cntp_ctl_el0, {}", in(reg) 0u64);
             }
         }
+        v2::Ack::SGI { intid, cpu_id } => {
+            if intid != arm_gic_driver::IntId::sgi(1) {
+                panic!("Unexpected SGI interrupt: {intid:?}");
+            }
+            debug!("SGI interrupt received from CPU {cpu_id}!");
+            SGI_INTERRUPT_FIRED.store(true, Ordering::SeqCst);
+        }
+        _ => {
+            debug!("Other interrupt received: {ack:?}");
+        }
+    }
 
-        cpu.eoi(irq);
+    if !ack.is_special() {
+        cpu.eoi(ack);
         if cpu.eoi_mode_ns() {
-            cpu.dir(irq);
+            cpu.dir(ack);
         }
-    } else {
-        debug!("No IRQ to handle");
     }
 }

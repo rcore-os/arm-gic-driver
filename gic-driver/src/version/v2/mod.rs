@@ -114,7 +114,7 @@ impl Gic {
     }
 
     /// Set interrupt enable state
-    pub fn set_enable(&self, intid: IntId, enable: bool) {
+    pub fn set_irq_enable(&self, intid: IntId, enable: bool) {
         if enable {
             self.gicd().ISENABLER.set_irq_bit(intid.into());
         } else {
@@ -123,7 +123,7 @@ impl Gic {
     }
 
     /// Is interrupt enabled?
-    pub fn is_enable(&self, id: IntId) -> bool {
+    pub fn is_irq_enable(&self, id: IntId) -> bool {
         self.gicd().ISENABLER.get_irq_bit(id.into())
     }
 
@@ -328,14 +328,24 @@ impl SGITarget {
 }
 #[derive(Debug, Clone, Copy)]
 pub enum Ack {
-    Normal(IntId),
     SGI { intid: IntId, cpu_id: usize },
+    Other(IntId),
+}
+
+impl Ack {
+    pub fn is_special(&self) -> bool {
+        if let Ack::Other(intid) = self {
+            intid.is_special()
+        } else {
+            false
+        }
+    }
 }
 
 impl From<Ack> for u32 {
     fn from(ack: Ack) -> Self {
         match ack {
-            Ack::Normal(intid) => gicc::IAR::InterruptID.val(intid.to_u32()),
+            Ack::Other(intid) => gicc::IAR::InterruptID.val(intid.to_u32()),
             Ack::SGI { intid, cpu_id } => {
                 gicc::IAR::InterruptID.val(intid.to_u32()) + gicc::IAR::CPUID.val(cpu_id as u32)
             }
@@ -352,7 +362,7 @@ impl From<u32> for Ack {
             let cpu_id = reg.read(gicc::IAR::CPUID) as usize;
             Ack::SGI { intid, cpu_id }
         } else {
-            Ack::Normal(intid)
+            Ack::Other(intid)
         }
     }
 }
@@ -411,19 +421,14 @@ impl CpuInterface {
 
     /// Acknowledge an interrupt and return the interrupt ID
     /// Returns the interrupt ID and source CPU ID (for SGIs)
-    pub fn ack(&self) -> Option<Ack> {
-        let data = self.gicc().IAR.extract();
-        let id = data.read(gicc::IAR::InterruptID);
-        if id == 1023 {
-            return None;
-        }
-        Some(data.get().into())
+    pub fn ack(&self) -> Ack {
+        self.gicc().IAR.get().into()
     }
 
     /// Signal end of interrupt processing
     pub fn eoi(&self, ack: Ack) {
         let val = match ack {
-            Ack::Normal(intid) => gicc::EOIR::EOIINTID.val(intid.to_u32()),
+            Ack::Other(intid) => gicc::EOIR::EOIINTID.val(intid.to_u32()),
             Ack::SGI { intid, cpu_id } => {
                 gicc::EOIR::EOIINTID.val(intid.to_u32()) + gicc::EOIR::CPUID.val(cpu_id as u32)
             }
@@ -434,7 +439,7 @@ impl CpuInterface {
     /// Deactivate an interrupt
     pub fn dir(&self, ack: Ack) {
         let val = match ack {
-            Ack::Normal(intid) => gicc::DIR::InterruptID.val(intid.to_u32()),
+            Ack::Other(intid) => gicc::DIR::InterruptID.val(intid.to_u32()),
             Ack::SGI { intid, cpu_id } => {
                 gicc::DIR::InterruptID.val(intid.to_u32()) + gicc::DIR::CPUID.val(cpu_id as u32)
             }
@@ -458,25 +463,19 @@ impl CpuInterface {
         self.gicc().PMR.write(gicc::PMR::Priority.val(mask as u32));
     }
 
-    /// Enable a specific interrupt
-    pub fn irq_enable(&self, id: IntId) {
+    pub fn set_irq_enable(&self, id: IntId, enable: bool) {
         assert!(
             id.is_private(),
             "Cannot enable non-private interrupt: {id:?}"
         );
-        self.gicd().ISENABLER.set_irq_bit(id.into());
+        if enable {
+            self.gicd().ISENABLER.set_irq_bit(id.into());
+        } else {
+            self.gicd().ICENABLER.set_irq_bit(id.into());
+        }
     }
 
-    /// Disable a specific interrupt
-    pub fn irq_disable(&self, id: IntId) {
-        assert!(
-            id.is_private(),
-            "Cannot disable non-private interrupt: {id:?}"
-        );
-        self.gicd().ICENABLER.set_irq_bit(id.into());
-    }
-
-    pub fn irq_is_enabled(&self, id: IntId) -> bool {
+    pub fn is_irq_enable(&self, id: IntId) -> bool {
         assert!(
             id.is_private(),
             "Cannot check non-private interrupt: {id:?}"

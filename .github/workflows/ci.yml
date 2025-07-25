@@ -2,6 +2,9 @@ name: Build & Check CI
 
 on: [push, pull_request]
 
+env:
+  qemu-version: 9.2.4
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -41,6 +44,7 @@ jobs:
     - name: Build
       run: cargo build --target aarch64-unknown-none-softfloat --all-features
       if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
-    - name: Unit test
-      if: ${{ matrix.targets == 'x86_64-unknown-linux-gnu' }}
+    - name: Test GICv2 
       run: ./test.sh
+    - name: Test GICv3
+      run: ./test_v3.sh

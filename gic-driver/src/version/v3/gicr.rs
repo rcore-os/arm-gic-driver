@@ -371,9 +371,19 @@ impl SGI {
         }
     }
 
+    pub fn is_interrupt_enabled(&self, irq: IntId) -> bool {
+        let int_id: u32 = irq.into();
+        let bit = 1 << (int_id % 32);
+        (self.ISENABLER0.get() & bit) != 0
+    }
+
     /// Set interrupt priority
     pub fn set_priority(&self, intid: IntId, priority: u8) {
         self.IPRIORITYR[u32::from(intid) as usize].set(priority)
+    }
+
+    pub fn get_priority(&self, intid: IntId) -> u8 {
+        self.IPRIORITYR[u32::from(intid) as usize].get()
     }
 
     /// Set interrupt configuration (edge/level triggered)
@@ -408,6 +418,12 @@ impl SGI {
         }
     }
 
+    pub fn is_pending(&self, intid: IntId) -> bool {
+        let int_id: u32 = intid.into();
+        let bit = 1 << (int_id % 32);
+        (self.ISPENDR0.get() & bit) != 0
+    }
+
     /// Set interrupt active state
     pub fn set_active(&self, intid: IntId, active: bool) {
         let int_id: u32 = intid.into();
@@ -417,6 +433,12 @@ impl SGI {
         } else {
             self.ICACTIVER0.set(bit);
         }
+    }
+
+    pub fn is_active(&self, intid: IntId) -> bool {
+        let int_id: u32 = intid.into();
+        let bit = 1 << (int_id % 32);
+        (self.ISACTIVER0.get() & bit) != 0
     }
 
     /// Set interrupt group
@@ -430,6 +452,12 @@ impl SGI {
         }
     }
 
+    pub fn is_group1(&self, intid: IntId) -> bool {
+        let int_id: u32 = intid.into();
+        let bit = 1 << (int_id % 32);
+        (self.IGROUPR0.get() & bit) != 0
+    }
+
     /// Set interrupt group modifier
     pub fn set_group_modifier(&self, intid: IntId, modifier: bool) {
         let int_id: u32 = intid.into();
@@ -439,27 +467,6 @@ impl SGI {
         } else {
             self.IGRPMODR0.set(self.IGRPMODR0.get() & !bit);
         }
-    }
-
-    /// Check if interrupt is pending
-    pub fn is_pending(&self, intid: IntId) -> bool {
-        let int_id: u32 = intid.into();
-        let bit = 1 << (int_id % 32);
-        (self.ISPENDR0.get() & bit) != 0
-    }
-
-    /// Check if interrupt is active
-    pub fn is_active(&self, intid: IntId) -> bool {
-        let int_id: u32 = intid.into();
-        let bit = 1 << (int_id % 32);
-        (self.ISACTIVER0.get() & bit) != 0
-    }
-
-    /// Check if interrupt is enabled
-    pub fn is_enabled(&self, intid: IntId) -> bool {
-        let int_id: u32 = intid.into();
-        let bit = 1 << (int_id % 32);
-        (self.ISENABLER0.get() & bit) != 0
     }
 }
 

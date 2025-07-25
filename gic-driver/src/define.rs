@@ -50,7 +50,6 @@ impl IntId {
     /// # Safety
     /// `id` must be transformed into a valid [IntId]
     pub const unsafe fn raw(id: u32) -> Self {
-        assert!(id < SPECIAL_RANGE.end);
         Self(id)
     }
 
@@ -84,6 +83,10 @@ impl IntId {
 
     pub const fn to_u32(self) -> u32 {
         self.0
+    }
+
+    pub fn is_special(&self) -> bool {
+        SPECIAL_RANGE.contains(&self.0)
     }
 }
 

@@ -140,6 +140,10 @@ impl Gic {
         }
     }
 
+    pub fn max_intid(&self) -> u32 {
+        self.gicd().max_intid()
+    }
+
     fn disable(&self) {
         let old = self.gicd().CTLR.get();
         let val = match self.security_state {
@@ -186,7 +190,7 @@ impl Gic {
         }
     }
 
-    pub fn set_enable(&mut self, intid: IntId, enable: bool) {
+    pub fn set_irq_enable(&mut self, intid: IntId, enable: bool) {
         assert!(
             !intid.is_private(),
             "Cannot enable/disable private interrupts directly"
@@ -199,7 +203,7 @@ impl Gic {
         }
     }
 
-    pub fn is_enable(&self, id: IntId) -> bool {
+    pub fn is_irq_enable(&self, id: IntId) -> bool {
         self.gicd().ISENABLER.get_irq_bit(id.into())
     }
 
@@ -227,7 +231,7 @@ impl Gic {
         if pending {
             self.gicd().set_pending(id.into());
         } else {
-            self.gicd().ICPENDR.set_irq_bit(id.into());
+            self.gicd().clear_pending(id.into());
         }
     }
 
@@ -304,6 +308,10 @@ impl Gic {
         );
         self.gicd().get_interrupt_route(id.to_u32())
     }
+
+    pub fn max_cpu_num(&self) -> usize {
+        self.gicd().max_cpu_num() as _
+    }
 }
 
 /// Every CPU interface has its own GICC registers
@@ -371,5 +379,111 @@ impl CpuInterface {
 
         trace!("CPU interface initialized successfully");
         Ok(())
+    }
+
+    /// Set the EOI mode for non-secure interrupts
+    ///
+    /// - `false` GICC_EOIR has both priority drop and deactivate interrupt functionality. Accesses to the GICC_DIR are UNPREDICTABLE.
+    /// - `true`  GICC_EOIR has priority drop functionality only. GICC_DIR has deactivate interrupt functionality.
+    pub fn set_eoi_mode(&self, is_two_step: bool) {
+        ICC_CTLR_EL1.modify(if is_two_step {
+            ICC_CTLR_EL1::EOIMODE::SET
+        } else {
+            ICC_CTLR_EL1::EOIMODE::CLEAR
+        });
+    }
+
+    pub fn ack0(&self) -> IntId {
+        let raw = ICC_IAR0_EL1.read(ICC_IAR0_EL1::INTID) as u32;
+        unsafe { IntId::raw(raw) }
+    }
+
+    pub fn ack1(&self) -> IntId {
+        let raw = ICC_IAR1_EL1.read(ICC_IAR1_EL1::INTID) as u32;
+        unsafe { IntId::raw(raw) }
+    }
+
+    pub fn eoi0(&self, ack: IntId) {
+        ICC_EOIR0_EL1.write(ICC_EOIR0_EL1::INTID.val(ack.to_u32() as _));
+    }
+
+    pub fn eoi1(&self, ack: IntId) {
+        ICC_EOIR1_EL1.write(ICC_EOIR1_EL1::INTID.val(ack.to_u32() as _));
+    }
+
+    /// Deactivate an interrupt
+    pub fn dir(&self, ack: IntId) {
+        ICC_DIR_EL1.write(ICC_DIR_EL1::INTID.val(ack.to_u32() as _));
+    }
+
+    /// Set the priority mask (interrupts with priority >= mask will be masked)
+    pub fn set_priority_mask(&self, mask: u8) {
+        ICC_PMR_EL1.write(ICC_PMR_EL1::PRIORITY.val(mask as _));
+    }
+
+    pub fn set_irq_enable(&self, id: IntId, enable: bool) {
+        assert!(
+            id.is_private(),
+            "Cannot enable non-private interrupt: {id:?}"
+        );
+        self.rd().sgi.set_enable_interrupt(id, enable);
+    }
+
+    pub fn is_irq_enable(&self, id: IntId) -> bool {
+        assert!(
+            id.is_private(),
+            "Cannot check non-private interrupt: {id:?}"
+        );
+        self.rd().sgi.is_interrupt_enabled(id)
+    }
+
+    /// Set interrupt priority (0 = highest priority, 255 = lowest priority)
+    pub fn set_priority(&self, id: IntId, priority: u8) {
+        assert!(
+            id.is_private(),
+            "Cannot set priority for non-private interrupt: {id:?}"
+        );
+
+        self.rd().sgi.set_priority(id, priority);
+    }
+
+    pub fn get_priority(&self, id: IntId) -> u8 {
+        assert!(
+            id.is_private(),
+            "Cannot get priority for non-private interrupt: {id:?}"
+        );
+        self.rd().sgi.get_priority(id)
+    }
+
+    pub fn set_active(&self, id: IntId, active: bool) {
+        assert!(
+            id.is_private(),
+            "Cannot set active state for non-private interrupt: {id:?}"
+        );
+        self.rd().sgi.set_active(id, active);
+    }
+
+    pub fn is_active(&self, id: IntId) -> bool {
+        assert!(
+            id.is_private(),
+            "Cannot check active state for non-private interrupt: {id:?}"
+        );
+        self.rd().sgi.is_active(id)
+    }
+
+    pub fn set_pending(&self, id: IntId, pending: bool) {
+        assert!(
+            id.is_private(),
+            "Cannot set pending state for non-private interrupt: {id:?}"
+        );
+        self.rd().sgi.set_pending(id, pending);
+    }
+
+    pub fn is_pending(&self, id: IntId) -> bool {
+        assert!(
+            id.is_private(),
+            "Cannot check pending state for non-private interrupt: {id:?}"
+        );
+        self.rd().sgi.is_pending(id)
     }
 }
