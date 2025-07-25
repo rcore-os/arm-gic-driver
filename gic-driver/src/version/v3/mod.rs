@@ -11,7 +11,7 @@ macro_rules! cpu_read {
     ($name: expr) => {{
         let x: usize;
         unsafe {
-            core::arch::asm!(concat!("mrs {}, ", $name), out(reg) x);
+            core::arch::asm!(concat!("mrs {0}, ", $name), out(reg) x);
         }
         x
     }};
@@ -244,15 +244,11 @@ impl CpuInterface {
 
         // 3. Configure CPU interface system registers
         if CurrentEL.read(CurrentEL::EL) == 2 {
-            let mut reg = cpu_read!("ICC_SRE_EL2");
-            reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
-            cpu_write!("ICC_SRE_EL2", reg);
+            ICC_SRE_EL2
+                .write(ICC_SRE_EL2::SRE::SET + ICC_SRE_EL2::DFB::SET + ICC_SRE_EL2::DIB::SET);
         } else {
-            let mut reg = cpu_read!("ICC_SRE_EL1");
-            if (reg & GICC_SRE_SRE) == 0 {
-                reg |= GICC_SRE_SRE | GICC_SRE_DFB | GICC_SRE_DIB;
-                cpu_write!("ICC_SRE_EL1", reg);
-            }
+            ICC_SRE_EL1
+                .write(ICC_SRE_EL1::SRE::SET + ICC_SRE_EL1::DFB::SET + ICC_SRE_EL1::DIB::SET);
         }
 
         // 4. Set interrupt priority mask to allow all priorities
