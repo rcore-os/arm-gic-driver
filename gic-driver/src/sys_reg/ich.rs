@@ -132,9 +132,9 @@ define_readwrite_register! {
     }
 }
 
-// List Registers - 16 registers from LR0 to LR15
-define_readwrite_register! {
-    ICH_LR0_EL2 {
+tock_registers::register_bitfields! {
+    u64,
+    pub ICH_LR_EL2 [
         VINTID OFFSET(0) NUMBITS(32) [],
         STATE OFFSET(62) NUMBITS(2) [],
         HW OFFSET(61) NUMBITS(1) [],
@@ -142,185 +142,61 @@ define_readwrite_register! {
         NMI OFFSET(59) NUMBITS(1) [],
         PRIORITY OFFSET(48) NUMBITS(8) [],
         PINTID OFFSET(32) NUMBITS(16) [],
-    }
+    ]
 }
 
-define_readwrite_register! {
-    ICH_LR1_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
+macro_rules! define_ich_lr_register {
+    ($n:stmt)=>{
+        paste::paste! {
+           pub mod [<ich_lr $n _el2>] {
+            use super::ICH_LR_EL2;
+            use tock_registers::interfaces::*;
+            use core::arch::asm;
+
+            pub struct Reg;
+
+            impl Readable for Reg {
+                type T = u64;
+                type R = ICH_LR_EL2::Register;
+
+                #[inline(always)]
+                fn get(&self) -> Self::T {
+                    let reg: u64;
+                    unsafe { asm!(concat!("mrs {0}, ", stringify!( [<ICH_LR $n _EL2>])), out(reg) reg) }
+                    reg
+                }
+            }
+
+            impl Writeable for Reg {
+                type T = u64;
+                type R = ICH_LR_EL2::Register;
+
+                #[inline(always)]
+                fn set(&self, value: Self::T) {
+                    unsafe { asm!(concat!("msr ", stringify!([<ICH_LR $n _EL2>]), ", {0}"), in(reg) value) }
+                }
+            }
+
+            pub const [<ICH_LR $n _EL2>]: Reg = Reg{};
+        }
+        pub use  [<ich_lr $n _el2>]::[<ICH_LR $n _EL2>];
+        }
+    };
 }
 
-define_readwrite_register! {
-    ICH_LR2_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR3_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR4_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR5_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR6_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR7_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR8_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR9_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR10_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR11_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR12_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR13_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR14_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
-
-define_readwrite_register! {
-    ICH_LR15_EL2 {
-        VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
-        HW OFFSET(61) NUMBITS(1) [],
-        GROUP OFFSET(60) NUMBITS(1) [],
-        NMI OFFSET(59) NUMBITS(1) [],
-        PRIORITY OFFSET(48) NUMBITS(8) [],
-        PINTID OFFSET(32) NUMBITS(16) [],
-    }
-}
+define_ich_lr_register!(0);
+define_ich_lr_register!(1);
+define_ich_lr_register!(2);
+define_ich_lr_register!(3);
+define_ich_lr_register!(4);
+define_ich_lr_register!(5);
+define_ich_lr_register!(6);
+define_ich_lr_register!(7);
+define_ich_lr_register!(8);
+define_ich_lr_register!(9);
+define_ich_lr_register!(10);
+define_ich_lr_register!(11);
+define_ich_lr_register!(12);
+define_ich_lr_register!(13);
+define_ich_lr_register!(14);
+define_ich_lr_register!(15);
