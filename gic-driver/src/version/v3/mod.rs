@@ -10,6 +10,7 @@ use tock_registers::{LocalRegisterCopy, interfaces::*};
 mod gicd;
 mod gicr;
 
+
 pub use crate::{IntId, VirtAddr, define::Trigger, sys_reg::*};
 
 use crate::version::{IrqVecReadable, IrqVecWriteable};

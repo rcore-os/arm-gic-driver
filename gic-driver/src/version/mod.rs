@@ -5,6 +5,9 @@ pub mod v3;
 
 use crate::define::*;
 
+#[cfg(feature = "rdif")]
+mod rdif;
+
 /// 通用 trait：为一组 ReadWrite<u32> 寄存器设置某一位
 trait IrqVecWriteable {
     fn set_irq_bit(&self, intid: u32);
