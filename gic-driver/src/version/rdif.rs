@@ -43,6 +43,40 @@ fn parse_dtb_fn(itr: &[u32]) -> Result<IrqConfig, alloc::string::String> {
     Ok(config.into())
 }
 
+impl From<crate::define::IntId> for IrqId {
+    fn from(id: crate::define::IntId) -> Self {
+        (id.to_u32() as usize).into()
+    }
+}
+
+impl From<IrqId> for crate::define::IntId {
+    fn from(id: IrqId) -> Self {
+        let raw: usize = id.into();
+        unsafe { crate::define::IntId::raw(raw as u32) }
+    }
+}
+
+impl From<crate::define::Trigger> for Trigger {
+    fn from(trigger: crate::define::Trigger) -> Self {
+        match trigger {
+            crate::define::Trigger::Edge => Trigger::EdgeRising,
+            crate::define::Trigger::Level => Trigger::LevelHigh,
+        }
+    }
+}
+
+impl From<Trigger> for crate::define::Trigger {
+    fn from(trigger: Trigger) -> Self {
+        match trigger {
+            Trigger::LevelLow => crate::define::Trigger::Level,
+            Trigger::LevelHigh => crate::define::Trigger::Level,
+            Trigger::EdgeRising => crate::define::Trigger::Edge,
+            Trigger::EdgeBoth => crate::define::Trigger::Edge,
+            Trigger::EdgeFailling => crate::define::Trigger::Edge,
+        }
+    }
+}
+
 impl From<crate::define::IrqConfig> for IrqConfig {
     fn from(config: crate::define::IrqConfig) -> Self {
         IrqConfig {
