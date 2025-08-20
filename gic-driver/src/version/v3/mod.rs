@@ -5,11 +5,10 @@ use aarch64_cpu::{
     registers::{CurrentEL, MPIDR_EL1},
 };
 use log::*;
-use tock_registers::{LocalRegisterCopy, interfaces::*};
+pub use tock_registers::{LocalRegisterCopy, interfaces::*};
 
 mod gicd;
 mod gicr;
-
 
 pub use crate::{IntId, VirtAddr, define::Trigger, sys_reg::*};
 
