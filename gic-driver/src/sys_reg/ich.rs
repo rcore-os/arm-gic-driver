@@ -136,7 +136,12 @@ tock_registers::register_bitfields! {
     u64,
     pub ICH_LR_EL2 [
         VINTID OFFSET(0) NUMBITS(32) [],
-        STATE OFFSET(62) NUMBITS(2) [],
+        STATE OFFSET(62) NUMBITS(2) [
+            Invalid = 0b00,
+            Pending = 0b01,
+            Active = 0b10,
+            PendingAndActive = 0b11
+        ],
         HW OFFSET(61) NUMBITS(1) [],
         GROUP OFFSET(60) NUMBITS(1) [],
         NMI OFFSET(59) NUMBITS(1) [],
