@@ -2,6 +2,12 @@
 //
 // ICH (Interrupt Controller Hypervisor) System registers
 
+use aarch64_cpu::registers::{ReadWriteable, Readable, Writeable};
+use tock_registers::{
+    LocalRegisterCopy,
+    fields::{Field, FieldValue},
+};
+
 // Active Priority Group 0 寄存器 (EL2)
 define_readwrite_register! {
     ICH_AP0R0_EL2 {
@@ -205,3 +211,68 @@ define_ich_lr_register!(12);
 define_ich_lr_register!(13);
 define_ich_lr_register!(14);
 define_ich_lr_register!(15);
+
+macro_rules! ich_lr_el2_case {
+    ($n:expr, $body:ident()) => {
+        match $n {
+            0 => ICH_LR0_EL2.$body(),
+            1 => ICH_LR1_EL2.$body(),
+            2 => ICH_LR2_EL2.$body(),
+            3 => ICH_LR3_EL2.$body(),
+            4 => ICH_LR4_EL2.$body(),
+            5 => ICH_LR5_EL2.$body(),
+            6 => ICH_LR6_EL2.$body(),
+            7 => ICH_LR7_EL2.$body(),
+            8 => ICH_LR8_EL2.$body(),
+            9 => ICH_LR9_EL2.$body(),
+            10 => ICH_LR10_EL2.$body(),
+            11 => ICH_LR11_EL2.$body(),
+            12 => ICH_LR12_EL2.$body(),
+            13 => ICH_LR13_EL2.$body(),
+            14 => ICH_LR14_EL2.$body(),
+            15 => ICH_LR15_EL2.$body(),
+            _ => panic!("Invalid ICH_LR_EL2 register number: {}", $n),
+        }
+    };
+    ($n:expr, $body:ident($arg:expr)) => {
+        match $n {
+            0 => ICH_LR0_EL2.$body($arg),
+            1 => ICH_LR1_EL2.$body($arg),
+            2 => ICH_LR2_EL2.$body($arg),
+            3 => ICH_LR3_EL2.$body($arg),
+            4 => ICH_LR4_EL2.$body($arg),
+            5 => ICH_LR5_EL2.$body($arg),
+            6 => ICH_LR6_EL2.$body($arg),
+            7 => ICH_LR7_EL2.$body($arg),
+            8 => ICH_LR8_EL2.$body($arg),
+            9 => ICH_LR9_EL2.$body($arg),
+            10 => ICH_LR10_EL2.$body($arg),
+            11 => ICH_LR11_EL2.$body($arg),
+            12 => ICH_LR12_EL2.$body($arg),
+            13 => ICH_LR13_EL2.$body($arg),
+            14 => ICH_LR14_EL2.$body($arg),
+            15 => ICH_LR15_EL2.$body($arg),
+            _ => panic!("Invalid ICH_LR_EL2 register number: {}", $n),
+        }
+    };
+}
+
+pub fn ich_lr_el2_get(n: usize) -> LocalRegisterCopy<u64, ICH_LR_EL2::Register> {
+    ich_lr_el2_case!(n, extract())
+}
+
+pub fn ich_lr_el2_set(n: usize, value: LocalRegisterCopy<u64, ICH_LR_EL2::Register>) {
+    ich_lr_el2_case!(n, set(value.get()));
+}
+
+pub fn ich_lr_el2_write(n: usize, field: FieldValue<u64, ICH_LR_EL2::Register>) {
+    ich_lr_el2_case!(n, write(field));
+}
+
+pub fn ich_lr_el2_modify(n: usize, field: FieldValue<u64, ICH_LR_EL2::Register>) {
+    ich_lr_el2_case!(n, modify(field));
+}
+
+pub fn ich_lr_el2_is_set(n: usize, field: Field<u64, ICH_LR_EL2::Register>) -> bool {
+    ich_lr_el2_case!(n, is_set(field))
+}

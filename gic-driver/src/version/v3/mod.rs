@@ -1063,31 +1063,56 @@ unsafe impl Sync for TrapOp {}
 
 impl TrapOp {
     pub fn eoi_mode(&self) -> bool {
-        ICC_CTLR_EL1.is_set(ICC_CTLR_EL1::EOIMODE)
+        eoi_mode()
     }
 
     pub fn ack0(&self) -> IntId {
-        let raw = ICC_IAR0_EL1.read(ICC_IAR0_EL1::INTID) as u32;
-        unsafe { IntId::raw(raw) }
+        ack0()
     }
 
     pub fn ack1(&self) -> IntId {
-        let raw = ICC_IAR1_EL1.read(ICC_IAR1_EL1::INTID) as u32;
-        unsafe { IntId::raw(raw) }
+        ack1()
     }
 
     pub fn eoi0(&self, ack: IntId) {
-        ICC_EOIR0_EL1.write(ICC_EOIR0_EL1::INTID.val(ack.to_u32() as _));
+        eoi0(ack);
     }
 
     pub fn eoi1(&self, ack: IntId) {
-        ICC_EOIR1_EL1.write(ICC_EOIR1_EL1::INTID.val(ack.to_u32() as _));
+        eoi1(ack);
     }
 
     /// Deactivate an interrupt
     pub fn dir(&self, ack: IntId) {
-        ICC_DIR_EL1.write(ICC_DIR_EL1::INTID.val(ack.to_u32() as _));
+        dir(ack);
     }
+}
+
+pub fn eoi_mode() -> bool {
+    ICC_CTLR_EL1.is_set(ICC_CTLR_EL1::EOIMODE)
+}
+
+pub fn ack0() -> IntId {
+    let raw = ICC_IAR0_EL1.read(ICC_IAR0_EL1::INTID) as u32;
+    unsafe { IntId::raw(raw) }
+}
+
+pub fn ack1() -> IntId {
+    let raw = ICC_IAR1_EL1.read(ICC_IAR1_EL1::INTID) as u32;
+    unsafe { IntId::raw(raw) }
+}
+
+pub fn eoi0(ack: IntId) {
+    ICC_EOIR0_EL1.write(ICC_EOIR0_EL1::INTID.val(ack.to_u32() as _));
+}
+
+pub fn eoi1(ack: IntId) {
+    ICC_EOIR1_EL1.write(ICC_EOIR1_EL1::INTID.val(ack.to_u32() as _));
+}
+
+/// Deactivate an interrupt
+pub fn dir(ack: IntId) {
+    ICC_DIR_EL1.write(ICC_DIR_EL1::INTID.val(ack.to_u32() as _));
 }
 
 /// Send a Software Generated Interrupt (SGI) to target CPUs.
