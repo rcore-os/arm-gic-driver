@@ -912,8 +912,10 @@ impl CpuInterface {
             }
         }
 
-        // 6. Configure EOI mode - default to single EOI mode
-        ICC_CTLR_EL1.modify(ICC_CTLR_EL1::EOIMODE::CLEAR);
+        // 6. Configure EOI mode
+        if CurrentEL.read(CurrentEL::EL) == 2 {
+            ICC_CTLR_EL1.modify(ICC_CTLR_EL1::EOIMODE::SET);
+        }
 
         trace!("CPU interface initialized successfully");
         Ok(())
