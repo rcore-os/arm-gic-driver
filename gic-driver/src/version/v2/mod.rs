@@ -58,6 +58,14 @@ impl Gic {
         unsafe { &*(self.gicd.as_ptr()) }
     }
 
+    pub fn gicc_addr(&self) -> VirtAddr {
+        self.gicc
+    }
+
+    pub fn gicd_addr(&self) -> VirtAddr {
+        self.gicd
+    }
+
     pub fn cpu_interface(&self) -> CpuInterface {
         CpuInterface {
             gicd: self.gicd.as_ptr(),

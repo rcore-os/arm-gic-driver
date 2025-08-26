@@ -248,7 +248,6 @@ impl Affinity {
 /// ```
 pub struct Gic {
     gicd: VirtAddr,
-    #[allow(dead_code)]
     gicr: VirtAddr,
     security_state: SecurityState,
 }
@@ -293,11 +292,13 @@ impl Gic {
         unsafe { &*self.gicd.as_ptr() }
     }
 
-    #[allow(dead_code)]
-    fn redistributor_reg(&self) -> VirtAddr {
+    pub fn gicr_addr(&self) -> VirtAddr {
         self.gicr
     }
 
+    pub fn gicd_addr(&self) -> VirtAddr {
+        self.gicd
+    }
     /// Initialize the GICv3 Distributor according to ARM GIC Architecture Specification v3/v4
     ///
     /// This function implements the initialization sequence described in section 12.9.4
