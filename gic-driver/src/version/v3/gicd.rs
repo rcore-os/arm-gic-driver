@@ -347,9 +347,9 @@ impl DistributorReg {
         let num_regs = max_interrupts.div_ceil(16) as usize;
         let num_regs = num_regs.min(self.ICFGR.len());
 
-        // Configure all interrupts as level-sensitive (0x0) by default
+        // Configure all interrupts as edge-sensitive (0x1) by default
         for i in 0..num_regs {
-            self.ICFGR[i].set(0);
+            self.ICFGR[i].set(u32::MAX);
         }
     }
 
