@@ -1,6 +1,7 @@
 #![no_std]
 
 pub(crate) mod define;
+#[cfg(target_arch = "aarch64")]
 pub mod sys_reg;
 
 #[cfg(test)]
