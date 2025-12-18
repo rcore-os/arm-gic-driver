@@ -9,5 +9,5 @@ resolver = "3"
 any-uart = {version = "0.2"}
 arm-gic-driver = {path = "gic-driver"}
 log = "0.4"
-somehal = {version = "0.3"}
+somehal = {version = "0.4"}
 test-base = {path = "itest/test-base"}

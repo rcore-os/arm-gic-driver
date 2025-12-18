@@ -1,0 +1,16 @@
+args = [
+  "-nographic",
+  "-cpu",
+  "cortex-a53",
+  "-machine",
+  "virt,gic-version=3",
+]
+fail_regex = [
+  "FAILED",
+  "Panicked:",
+]
+success_regex = [
+  "All tests passed!"
+]
+uefi = false
+to_bin = true
