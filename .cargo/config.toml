@@ -2,4 +2,4 @@
 target = "aarch64-unknown-none-softfloat"
 
 [target.'cfg(target_os = "none")']
-runner = "ostool cargo-test"
+runner = "cargo osrun"
