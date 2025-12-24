@@ -132,14 +132,25 @@ impl DistributorReg {
         }
     }
 
-    /// Set default priorities for all interrupts
-    pub(crate) fn set_default_priorities(&self, max_interrupts: u32) {
-        // Calculate number of priority registers needed (4 interrupts per register)
-        let num_regs = max_interrupts.div_ceil(4) as usize;
-        let num_regs = num_regs.min(self.IPRIORITYR.len());
+    /// Set default priorities for SGI and PPI (ID 0..31)
+    pub(crate) fn set_default_sgi_ppi_priorities(&self) {
+        // SGI and PPI: 32 interrupts
+        let num_regs = 32;
 
-        // Set default priority (0xA0 - middle priority) for all interrupts
         for i in 0..num_regs {
+            self.IPRIORITYR[i].set(0xA0);
+        }
+    }
+
+    /// Set default priorities for SPI (ID 32..max_interrupts-1)
+    pub(crate) fn set_default_spi_priorities(&self, max_interrupts: u32) {
+        let total_regs = max_interrupts.div_ceil(4) as usize;
+        let total_regs = total_regs.min(self.IPRIORITYR.len());
+
+        // SPI starts from interrupt ID 32
+        let spi_start_id = 32;
+
+        for i in spi_start_id..total_regs {
             self.IPRIORITYR[i].set(0xA0);
         }
     }
