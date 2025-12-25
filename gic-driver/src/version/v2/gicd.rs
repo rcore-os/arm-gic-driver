@@ -135,9 +135,9 @@ impl DistributorReg {
     /// Set default priorities for SGI and PPI (ID 0..31)
     pub(crate) fn set_default_sgi_ppi_priorities(&self) {
         // SGI and PPI: 32 interrupts
-        let num_regs = 32;
+        let num_interrupts = 32;
 
-        for i in 0..num_regs {
+        for i in 0..num_interrupts {
             self.IPRIORITYR[i].set(0xA0);
         }
     }
