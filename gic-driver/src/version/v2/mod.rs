@@ -106,8 +106,8 @@ impl Gic {
         self.gicd().groups_all_to_0(max_spi);
         trace!("[GICv2] Configure all interrupts as Group 1 (Non-secure) by default");
 
-        // 7. Set default priority for all interrupts
-        self.gicd().set_default_priorities(max_spi);
+        // 7. Set default priority for spi interrupts
+        self.gicd().set_default_spi_priorities(max_spi);
 
         // 8. Configure interrupt targets (for SPIs)
         self.gicd().configure_interrupt_targets(max_spi);
@@ -376,6 +376,9 @@ impl CpuInterface {
 
         // 5. Enable CPU interface for both Group 0 and Group 1 interrupts
         gicc.CTLR.write(gicc::CTLR::EnableGrp0::SET);
+
+        // 6. Set default priority for sgi and ppi interrupts
+        self.gicd().set_default_sgi_ppi_priorities();
     }
     /// Set the EOI mode for non-secure interrupts
     ///
