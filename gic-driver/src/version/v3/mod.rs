@@ -785,7 +785,10 @@ impl Gic {
     /// ```
     pub fn set_cfg(&self, id: IntId, cfg: Trigger) {
         if id.is_private() {
-            self.current_rd_ref().sgi.set_cfgr(id, cfg);
+            // Apply to all redistributors since private interrupts are per-CPU
+            for rd in self.rd_slice().iter() {
+                unsafe { rd.as_ref() }.sgi.set_cfgr(id, cfg);
+            }
         } else {
             self.gicd().set_interrupt_config(id, cfg);
         }

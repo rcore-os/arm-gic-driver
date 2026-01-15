@@ -16,8 +16,10 @@ impl DriverGeneric for super::v2::Gic {
 }
 
 impl Interface for super::v2::Gic {
-    fn parse_dtb_fn(&self) -> Option<FuncFdtParseConfig> {
-        Some(parse_dtb_fn)
+    fn setup_irq_by_fdt(&mut self, irq_prop: &[u32]) -> IrqId {
+        let config = fdt_parse_irq_config(irq_prop).unwrap();
+        self.set_cfg(config.id, config.trigger);
+        config.id.into()
     }
 }
 
@@ -33,14 +35,11 @@ impl DriverGeneric for super::v3::Gic {
 }
 
 impl Interface for super::v3::Gic {
-    fn parse_dtb_fn(&self) -> Option<FuncFdtParseConfig> {
-        Some(parse_dtb_fn)
+    fn setup_irq_by_fdt(&mut self, irq_prop: &[u32]) -> IrqId {
+        let config = fdt_parse_irq_config(irq_prop).unwrap();
+        self.set_cfg(config.id, config.trigger);
+        config.id.into()
     }
-}
-
-fn parse_dtb_fn(itr: &[u32]) -> Result<IrqConfig, alloc::string::String> {
-    let config = fdt_parse_irq_config(itr).map_err(alloc::string::String::from)?;
-    Ok(config.into())
 }
 
 impl From<crate::define::IntId> for IrqId {
