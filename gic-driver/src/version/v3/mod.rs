@@ -437,7 +437,7 @@ impl Gic {
     }
 
     fn current_rd(&self) -> NonNull<RedistributorV3> {
-        let want = (MPIDR_EL1.get() & 0xFFF) as u32;
+        let want = (MPIDR_EL1.get() & 0xFFFFFF) as u32;
 
         for rd in self.rd_slice().iter() {
             let affi = unsafe { rd.as_ref() }
