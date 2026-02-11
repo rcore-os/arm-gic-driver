@@ -2,6 +2,23 @@
 
 A Rust driver for the ARM Generic Interrupt Controller (GIC), designed for bare-metal and OS kernel environments.
 
+## Platform Requirements
+
+### Supported Architectures
+
+- **AArch64 (64-bit ARM)**: Full support for GICv1, GICv2, and GICv3
+- **ARMv7 (32-bit)**: Support for GICv1 and GICv2 only
+
+### Module Availability
+
+| Module | AArch64 | ARMv7/32-bit | x86_64 | Other |
+|--------|---------|--------------|--------|-------|
+| `v2`   | ✓       | ✓            | ✗      | ✗     |
+| `v3`   | ✓       | ✗            | ✗*     | ✗     |
+| `sys_reg` | ✓   | ✗            | ✗      | ✗     |
+
+*Documented for reference but not functionally available on non-ARM platforms.
+
 ## Features
 
 - **Multi-version Support**: Compatible with GICv1, GICv2, GICv3
