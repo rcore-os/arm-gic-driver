@@ -1128,6 +1128,16 @@ pub fn dir(ack: IntId) {
 ///
 /// * `sgi_id` - SGI interrupt ID (0-15)
 /// * `target` - Target specification for the SGI
+///
+/// # Example
+///
+/// ```ignore
+/// use arm_gic_driver::IntId;
+/// use arm_gic_driver::v3::SGITarget;
+///
+/// // Send SGI 5 to all other CPUs
+/// let sgi_id = IntId::sgi(5);
+/// arm_gic_driver::v3::send_sgi(sgi_id, SGITarget::AllOther);
 /// ```
 pub fn send_sgi(sgi_id: IntId, target: SGITarget) {
     assert!(sgi_id.is_sgi(), "Invalid SGI ID: {sgi_id:?}");
