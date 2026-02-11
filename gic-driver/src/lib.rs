@@ -1,7 +1,27 @@
 #![no_std]
 
+//! # ARM GIC Driver
+//!
+//! A driver for the ARM Generic Interrupt Controller (GIC).
+//!
+//! ## Platform Support
+//!
+//! This driver is designed for ARM AArch64 systems and provides:
+//!
+//! - **GICv2 support**: Available on both 32-bit and 64-bit ARM platforms
+//! - **GICv3 support**: Only available on 64-bit ARM (AArch64) platforms
+//! - **System Register access**: Only available on AArch64 platforms
+//!
+//! ### Platform-Specific Modules
+//!
+//! - The [`sys_reg`] module is **only available on AArch64** (`target_arch = "aarch64"`)
+//! - The [`v3`] module is **only available on 64-bit platforms** (`target_pointer_width = "64"`)
+//!
+//! If you're working on a non-ARM platform, most of this driver's functionality
+//! will not be available at compile time.
+
 pub(crate) mod define;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", doc))]
 pub mod sys_reg;
 
 #[cfg(test)]
