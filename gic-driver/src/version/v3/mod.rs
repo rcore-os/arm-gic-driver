@@ -1,3 +1,17 @@
+//! # GICv3 Driver Implementation
+//!
+//! ## Platform Requirements
+//!
+//! **This module is only available on 64-bit ARM platforms** where:
+//! - `target_arch = "aarch64"` OR
+//! - `target_pointer_width = "64"`
+//!
+//! ### Availability
+//!
+//! On AArch64 platforms, you can use this module directly.
+//! On 32-bit ARM platforms or non-ARM architectures, this module is not available.
+//! Use the [`v2`](crate::v2) module instead for GICv1/v2 support.
+
 use core::ptr::NonNull;
 
 use aarch64_cpu::{
