@@ -14,14 +14,12 @@
 //!
 //! ### Platform-Specific Modules
 //!
-//! - The [`sys_reg`] module is **only available on AArch64** (`target_arch = "aarch64"`)
 //! - The [`v3`] module is **only available on 64-bit platforms** (`target_pointer_width = "64"`)
 //!
 //! If you're working on a non-ARM platform, most of this driver's functionality
 //! will not be available at compile time.
 
 pub(crate) mod define;
-#[cfg(any(target_arch = "aarch64", doc))]
 pub mod sys_reg;
 
 #[cfg(test)]

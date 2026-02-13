@@ -18,6 +18,52 @@
 //     };
 // }
 
+macro_rules! __readable {
+    ($register:ident) => {
+        impl Readable for Reg {
+            type T = u64;
+            type R = $register::Register;
+
+            #[inline(always)]
+            fn get(&self) -> Self::T {
+                match () {
+                    #[cfg(target_arch = "aarch64")]
+                    () => {
+                        let reg: u64;
+                        unsafe { asm!(concat!("mrs {0}, ", stringify!($register)), out(reg) reg) }
+                        reg
+                    }
+
+                    #[cfg(not(target_arch = "aarch64"))]
+                    () => unimplemented!(),
+                }
+            }
+        }
+    };
+}
+
+macro_rules! __writeable {
+    ($register:ident) => {
+        impl Writeable for Reg {
+            type T = u64;
+            type R = $register::Register;
+
+            #[inline(always)]
+            fn set(&self, value: Self::T) {
+                match () {
+                    #[cfg(target_arch = "aarch64")]
+                    () => {
+                        unsafe { asm!(concat!("msr ", stringify!($register), ", {0}"), in(reg) value) }
+                    }
+
+                    #[cfg(not(target_arch = "aarch64"))]
+                    () => unimplemented!(),
+                }
+            }
+        }
+    }
+}
+
 macro_rules! define_readonly_register {
     (
         $(#[$attr:meta])*
@@ -40,17 +86,7 @@ macro_rules! define_readonly_register {
 
             pub struct Reg;
 
-            impl Readable for Reg {
-                type T = u64;
-                type R = $register::Register;
-
-                #[inline(always)]
-                fn get(&self) -> Self::T {
-                    let reg: u64;
-                    unsafe { asm!(concat!("mrs {0}, ", stringify!($register)), out(reg) reg) }
-                    reg
-                }
-            }
+            __readable!($register);
 
             pub const $register: Reg = Reg{};
         }
@@ -81,27 +117,8 @@ macro_rules! define_readwrite_register {
 
             pub struct Reg;
 
-            impl Readable for Reg {
-                type T = u64;
-                type R = $register::Register;
-
-                #[inline(always)]
-                fn get(&self) -> Self::T {
-                    let reg: u64;
-                    unsafe { asm!(concat!("mrs {0}, ", stringify!($register)), out(reg) reg) }
-                    reg
-                }
-            }
-
-            impl Writeable for Reg {
-                type T = u64;
-                type R = $register::Register;
-
-                #[inline(always)]
-                fn set(&self, value: Self::T) {
-                    unsafe { asm!(concat!("msr ", stringify!($register), ", {0}"), in(reg) value) }
-                }
-            }
+            __readable!($register);
+            __writeable!($register);
 
             pub const $register: Reg = Reg{};
         }
@@ -132,15 +149,7 @@ macro_rules! define_writeonly_register {
 
             pub struct Reg;
 
-            impl Writeable for Reg {
-                type T = u64;
-                type R = $register::Register;
-
-                #[inline(always)]
-                fn set(&self, value: Self::T) {
-                    unsafe { asm!(concat!("msr ", stringify!($register), ", {0}"), in(reg) value) }
-                }
-            }
+            __writeable!($register);
 
             pub const $register: Reg = Reg{};
         }
