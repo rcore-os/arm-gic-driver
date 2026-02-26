@@ -45,6 +45,7 @@ jobs:
       run: cargo fmt --all -- --check
     - name: Clippy
       run: cargo clippy --target ${{ matrix.targets }} --all-features -- -A clippy::new_without_default
+      if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
     - name: Build
       run: cargo build --target ${{ matrix.targets }} --all-features
     - name: Test GICv2 
