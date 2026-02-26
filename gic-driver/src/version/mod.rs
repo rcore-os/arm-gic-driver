@@ -1,7 +1,7 @@
 use tock_registers::{interfaces::*, registers::*};
 
 pub mod v2;
-#[cfg(any(target_pointer_width = "64", doc))]
+#[cfg(any(target_arch = "aarch64", doc))]
 pub mod v3;
 
 use crate::define::*;
