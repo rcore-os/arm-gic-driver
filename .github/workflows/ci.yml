@@ -48,6 +48,10 @@ jobs:
       if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
     - name: Build
       run: cargo build --target ${{ matrix.targets }} --all-features
+      if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
+    - name: Build
+      run: cargo build -p arm-gic-driver --target ${{ matrix.targets }} --all-features
+      if: ${{ matrix.targets == 'armv7a-none-eabihf' }}
     - name: Test GICv2 
       run: ./test.sh
       if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
