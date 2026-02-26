@@ -23,6 +23,7 @@ impl Interface for super::v2::Gic {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 impl DriverGeneric for super::v3::Gic {
     fn open(&mut self) -> Result<(), KError> {
         self.init();
@@ -34,6 +35,7 @@ impl DriverGeneric for super::v3::Gic {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 impl Interface for super::v3::Gic {
     fn setup_irq_by_fdt(&mut self, irq_prop: &[u32]) -> IrqId {
         let config = fdt_parse_irq_config(irq_prop).unwrap();
