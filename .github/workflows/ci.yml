@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         rust-toolchain: [nightly]
-        targets: [aarch64-unknown-none-softfloat]
+        targets: [aarch64-unknown-none-softfloat, armv7a-none-eabihf]
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@nightly
@@ -26,15 +26,19 @@ jobs:
         cache-targets: false
       
     - run: cargo install cargo-binutils
+      if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
     - uses: arceos-org/setup-qemu@v1
+      if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
       with:
         version: ${{ env.qemu-version }}
         arch_list: aarch64
     - uses: awalsh128/cache-apt-pkgs-action@latest
+      if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
       with:
         packages: libudev-dev
         version: 1.0
     - run: cargo install ostool
+      if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
     - name: Check rust version
       run: rustc --version --verbose
     - name: Check code format
@@ -42,9 +46,10 @@ jobs:
     - name: Clippy
       run: cargo clippy --target ${{ matrix.targets }} --all-features -- -A clippy::new_without_default
     - name: Build
-      run: cargo build --target aarch64-unknown-none-softfloat --all-features
-      if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
+      run: cargo build --target ${{ matrix.targets }} --all-features
     - name: Test GICv2 
       run: ./test.sh
+      if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
     - name: Test GICv3
       run: ./test_v3.sh
+      if: ${{ matrix.targets == 'aarch64-unknown-none-softfloat' }}
