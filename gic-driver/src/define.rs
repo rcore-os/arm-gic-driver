@@ -80,6 +80,23 @@ pub const SPECIAL_RANGE: Range<u32> = Range {
     end: 1024,
 };
 
+/// Map an INTID to its GICv3.1 NMI attribute register slot.
+///
+/// Returns the `(INMIR register index, bit mask)` used to program the NMI
+/// attribute for `intid`: SGIs (bits 0-15) and PPIs (bits 16-31) live in
+/// `GICR_INMIR0` (register index 0), SPIs in `GICD_INMIRn`. Special INTIDs
+/// (1020-1023) have no NMI attribute and are rejected.
+pub(crate) fn nmi_attr_slot(intid: IntId) -> Result<(usize, u32), &'static str> {
+    let id = intid.to_u32();
+    if SGI_RANGE.contains(&id) || PPI_RANGE.contains(&id) {
+        Ok((0, 1 << (id % 32)))
+    } else if SPI_RANGE.contains(&id) {
+        Ok(((id / 32) as usize, 1 << (id % 32)))
+    } else {
+        Err("NMI attribute is not supported for this INTID")
+    }
+}
+
 /// An interrupt identifier (INTID) for the GIC.
 ///
 /// Represents a unique interrupt ID that can be used with the GIC hardware.

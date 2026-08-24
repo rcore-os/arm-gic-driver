@@ -667,6 +667,8 @@ register_bitfields! [
             SingleSecurity = 0,
             TwoSecurity = 1,
         ],
+        /// Non-maskable interrupt property supported
+        NMI OFFSET(9) NUMBITS(1) [],
         /// Number of Lockable Shared Peripheral Interrupts
         LSPI OFFSET(11) NUMBITS(5) [],
         /// Interrupt identifier bits supported

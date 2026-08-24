@@ -19,6 +19,8 @@ fn main(_args: &somehal::BootInfo) -> ! {
     test_suit::ppi::test_irq();
     test_suit::sgi::test_to_current_cpu();
 
+    test_nmi_attribute();
+
     info!("{TEST_SUCCESS}");
 }
 
@@ -59,6 +61,58 @@ fn init_gic() {
         core::arch::asm!("msr daifclr, #2"); // 清除IRQ mask (bit 1)
     }
     debug!("Global interrupts enabled");
+}
+
+fn test_nmi_attribute() {
+    let gic = GIC.lock();
+    let (gicr_sticks, gicd_sticks) = gic.probe_nmi_attribute_support();
+    info!("GICv3.1 NMI attribute support: GICR_INMIR0={gicr_sticks}, GICD_INMIR0={gicd_sticks}");
+    if !(gicr_sticks && gicd_sticks) {
+        info!("NMI attribute registers not modeled; skipping NMI attribute test");
+        return;
+    }
+
+    // SGI: the attribute lives in the current CPU's GICR_INMIR0 (bits 0-15).
+    let sgi = IntId::sgi(5);
+    gic.set_nmi_attr(sgi, true).expect("set SGI NMI attribute");
+    assert!(
+        gic.is_nmi(sgi).expect("read SGI NMI attribute"),
+        "SGI NMI attribute not set"
+    );
+    gic.set_nmi_attr(sgi, false)
+        .expect("clear SGI NMI attribute");
+    assert!(
+        !gic.is_nmi(sgi).expect("read SGI NMI attribute"),
+        "SGI NMI attribute not cleared"
+    );
+
+    // PPI: the attribute lives in the current CPU's GICR_INMIR0.
+    let ppi = IntId::ppi(14);
+    gic.set_nmi_attr(ppi, true).expect("set PPI NMI attribute");
+    assert!(
+        gic.is_nmi(ppi).expect("read PPI NMI attribute"),
+        "PPI NMI attribute not set"
+    );
+    gic.set_nmi_attr(ppi, false)
+        .expect("clear PPI NMI attribute");
+    assert!(
+        !gic.is_nmi(ppi).expect("read PPI NMI attribute"),
+        "PPI NMI attribute not cleared"
+    );
+
+    // SPI: the attribute lives in GICD_INMIRn.
+    let spi = IntId::spi(42);
+    gic.set_nmi_attr(spi, true).expect("set SPI NMI attribute");
+    assert!(
+        gic.is_nmi(spi).expect("read SPI NMI attribute"),
+        "SPI NMI attribute not set"
+    );
+    gic.set_nmi_attr(spi, false)
+        .expect("clear SPI NMI attribute");
+    assert!(
+        !gic.is_nmi(spi).expect("read SPI NMI attribute"),
+        "SPI NMI attribute not cleared"
+    );
 }
 
 #[somehal::irq_handler]
